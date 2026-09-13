@@ -91,6 +91,9 @@ jobs:
       - name: Gradle wrapper permissions
         run: chmod +x gradlew
 
+      - name: Run unit tests (tar extractor vs real rootfs.tar)
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 

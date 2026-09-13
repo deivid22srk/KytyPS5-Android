@@ -46,21 +46,22 @@ fun AppScreen(activity: MainActivity, screen: Screen, onNavigate: (Screen) -> Un
     val session = activity.session
     var runtimeReady by remember { mutableStateOf(session.runtimeReady()) }
     var installProgress by remember { mutableFloatStateOf(-1f) }
+    var runtimeReport by remember { mutableStateOf(session.runtimeReport()) }
 
     LaunchedEffect(Unit) {
         NativeBridge.setCallback(EmuCallbacks(session))
         session.ensureInit()
-    }
-
-    // first-run (or version-change) runtime extraction from APK assets
-    LaunchedEffect(runtimeReady) {
-        if (!runtimeReady && RuntimeInstaller.needsInstall(activity)) {
+        if (!session.runtimeReady() && RuntimeInstaller.needsInstall(activity)) {
             withContext(Dispatchers.IO) {
                 RuntimeInstaller.install(activity) { pct -> installProgress = pct / 100f }
             }
-            runtimeReady = session.runtimeReady()
-            installProgress = -1f
         }
+        // real box64 probe: dlopen through the class-loader namespace
+        // (the .so is APK-embedded, so a file-exists check is not enough)
+        withContext(Dispatchers.IO) { session.probeBox64() }
+        runtimeReport = session.runtimeReport()
+        runtimeReady = session.runtimeReady()
+        installProgress = -1f
     }
 
     when {
@@ -68,7 +69,7 @@ fun AppScreen(activity: MainActivity, screen: Screen, onNavigate: (Screen) -> Un
             RuntimeInstallScreen(progress = installProgress)
         }
         !runtimeReady -> {
-            MissingRuntimeScreen(session)
+            MissingRuntimeScreen(runtimeReport)
         }
         screen == Screen.Library -> LibraryScreen(activity, onNavigate)
         screen == Screen.Settings -> SettingsScreen(activity, onNavigate)
@@ -95,7 +96,7 @@ private fun RuntimeInstallScreen(progress: Float) {
 }
 
 @Composable
-private fun MissingRuntimeScreen(session: EmulatorSession) {
+private fun MissingRuntimeScreen(runtimeReport: String) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.Center,
@@ -106,7 +107,7 @@ private fun MissingRuntimeScreen(session: EmulatorSession) {
         Text(stringResource(R.string.no_runtime_message), style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(12.dp))
         Text(
-            text = remember { session.runtimeReport() },
+            text = runtimeReport,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

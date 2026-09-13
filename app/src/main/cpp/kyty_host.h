@@ -50,6 +50,7 @@ struct HostState {
         /* in-process box64 */
         void *box64_lib = nullptr; /* dlopen handle */
         int (*box64_main)(int argc, const char **argv, char **env) = nullptr;
+        std::mutex box64_mutex; /* HostLoadBox64 may run from probe or start */
         pthread_t emu_thread {};
         std::atomic<bool> emu_thread_running{false};
         bool emu_thread_started = false;

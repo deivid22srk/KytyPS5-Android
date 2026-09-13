@@ -383,6 +383,10 @@ static bool HostLoadBox64(HostState &s) {
         if (s.box64_main != nullptr) {
                 return true;
         }
+        std::lock_guard<std::mutex> lock(s.box64_mutex);
+        if (s.box64_main != nullptr) { /* re-check under the lock */
+                return true;
+        }
         /* With useLegacyPackaging=false the library is NOT extracted to
          * nativeLibraryDir — it lives inside base.apk and is reachable
          * through the app class-loader namespace by its bare name (the
