@@ -37,57 +37,57 @@
 namespace KytyHost {
 
 struct HostState {
-	bool initialized = false;
+        bool initialized = false;
 
-	std::string files_root;      /* <filesDir>/kyty */
-	std::string native_lib_dir;  /* applicationInfo.nativeLibraryDir */
+        std::string files_root;      /* <filesDir>/kyty */
+        std::string native_lib_dir;  /* applicationInfo.nativeLibraryDir */
 
-	/* bridge */
-	int shm_fd = -1;
-	std::string shm_path;
-	KytyBridgeShm *shm = nullptr;
+        /* bridge */
+        int shm_fd = -1;
+        std::string shm_path;
+        KytyBridgeShm *shm = nullptr;
 
-	/* in-process box64 */
-	void *box64_lib = nullptr; /* dlopen handle */
-	int (*box64_main)(int argc, const char **argv, char **env) = nullptr;
-	pthread_t emu_thread {};
-	std::atomic<bool> emu_thread_running{false};
-	bool emu_thread_started = false;
+        /* in-process box64 */
+        void *box64_lib = nullptr; /* dlopen handle */
+        int (*box64_main)(int argc, const char **argv, char **env) = nullptr;
+        pthread_t emu_thread {};
+        std::atomic<bool> emu_thread_running{false};
+        bool emu_thread_started = false;
 
-	/* session */
-	std::atomic<bool> running{false};
-	std::atomic<int> exit_code{-1};
-	std::mutex start_mutex; /* one session at a time */
+        /* session */
+        std::atomic<bool> running{false};
+        std::atomic<int> exit_code{-1};
+        std::mutex start_mutex; /* one session at a time */
 
-	/* log capture (guest stdout/stderr redirected into this file) */
-	std::mutex log_mutex;
-	FILE *log_file = nullptr;   /* our side, for tailing */
-	uint64_t log_offset = 0;
-	std::string log_tail_buffer;
+        /* log capture (guest stdout/stderr redirected into this file) */
+        std::mutex log_mutex;
+        FILE *log_file = nullptr;   /* our side, for tailing */
+        uint64_t log_offset = 0;
+        std::string log_tail_buffer;
 
-	std::thread rumble_thread;
+        std::thread rumble_thread;
 
-	/* surface */
-	std::mutex surface_mutex;
-	ANativeWindow *window = nullptr;
-	uint32_t surface_seq_val = 0;
+        /* surface */
+        std::mutex surface_mutex;
+        ANativeWindow *window = nullptr;
+        uint32_t surface_seq_val = 0;
 
-	/* audio */
-	std::mutex audio_mutex;
-	struct AudioSlot {
-		std::atomic<bool> active{false};
-		std::atomic<bool> stop{false};
-		std::thread thread; /* detached lifecycle */
-		AAudioStream *stream = nullptr;
-		int shm_slot = -1;
-	} audio[KYTY_BRIDGE_MAX_AUDIO_DEVS];
-	std::thread audio_monitor;
+        /* audio */
+        std::mutex audio_mutex;
+        struct AudioSlot {
+                std::atomic<bool> active{false};
+                std::atomic<bool> stop{false};
+                std::thread thread; /* detached lifecycle */
+                AAudioStream *stream = nullptr;
+                int shm_slot = -1;
+        } audio[KYTY_BRIDGE_MAX_AUDIO_DEVS];
+        std::thread audio_monitor;
 
-	/* jvm for callbacks */
-	JavaVM *vm = nullptr;
-	jobject java_callback = nullptr; /* global ref to EmuCallbacks */
+        /* jvm for callbacks */
+        JavaVM *vm = nullptr;
+        jobject java_callback = nullptr; /* global ref to EmuCallbacks */
 
-	std::atomic<bool> shutdown{false};
+        std::atomic<bool> shutdown{false};
 };
 
 HostState &Host();
@@ -101,6 +101,10 @@ void HostShutdown();
 bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
                const std::vector<std::pair<std::string, std::string>> &env);
 void HostRequestQuit();
+/* force stop: silences audio/rumble immediately, detaches a stuck guest
+ * thread and notifies the UI. The translated guest cannot be safely killed
+ * mid-dynarec, so the underlying pthread is abandoned to drain on its own. */
+void HostKill();
 
 /* input */
 void HostSendKey(int32_t keycode, bool down, uint32_t meta);
@@ -122,6 +126,8 @@ void HostPushEvent(const KytyBridgeEvent &ev);
 void HostAudioMonitorMain();
 std::string HostEnumerateVulkanDevices();
 std::string HostReadLogTail(); /* thread-safe tail of the guest log file */
+void HostSetSurface(ANativeWindow *window, uint32_t w, uint32_t h);
+void HostClearSurface();
 
 } // namespace KytyHost
 

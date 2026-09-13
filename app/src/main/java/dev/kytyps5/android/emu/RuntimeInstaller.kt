@@ -160,7 +160,7 @@ object TarExtractor {
                         totalRead += n
                     }
                     out.close()
-                    if ((mode and 0o111) != 0) {
+                    if ((mode and 0x49L) != 0L) { // any exec bit (0o111)
                         outPath.setExecutable(true, false)
                     }
                     skipPadding(input, size)

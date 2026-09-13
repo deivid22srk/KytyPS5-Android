@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import dev.kytyps5.android.data.GameInfo
 import dev.kytyps5.android.data.GameRepository
+import dev.kytyps5.android.emu.EmuCallbacks
 import dev.kytyps5.android.emu.EmulatorSession
 import dev.kytyps5.android.emu.NativeBridge
 import dev.kytyps5.android.input.GamepadBridge
@@ -72,7 +73,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        NativeBridge.setCallback()
+        NativeBridge.setCallback(EmuCallbacks(session))
         session.ensureInit()
         gamepad.onResume()
         if (screen == Screen.Emulation) {

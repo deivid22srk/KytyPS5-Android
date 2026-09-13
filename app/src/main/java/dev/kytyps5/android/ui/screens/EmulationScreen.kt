@@ -5,6 +5,7 @@ import android.view.SurfaceView
 import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -534,7 +535,7 @@ private fun PadButton(
         modifier = modifier
             .size(sizeDp)
             .pointerInput(Unit) {
-                androidx.compose.foundation.gestures.detectTapGestures(
+                detectTapGestures(
                     onPress = {
                         onPress(true)
                         tryAwaitRelease()

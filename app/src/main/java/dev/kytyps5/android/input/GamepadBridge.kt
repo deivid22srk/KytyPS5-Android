@@ -121,12 +121,12 @@ class GamepadBridge {
         // triggers: brake/gas (modern) or RX/RY (legacy)
         val brake = event.getAxisValue(MotionEvent.AXIS_BRAKE)
         val gas = event.getAxisValue(MotionEvent.AXIS_GAS)
-        if (brake != 0f || gas != 0f || dev.hasAxis(MotionEvent.AXIS_BRAKE) ||
-            dev.hasAxis(MotionEvent.AXIS_GAS)
+        if (brake != 0f || gas != 0f || hasAxis(dev, MotionEvent.AXIS_BRAKE) ||
+            hasAxis(dev, MotionEvent.AXIS_GAS)
         ) {
             NativeBridge.padAxis(i, AXIS_TRIGGERLEFT, triggerToS16(brake))
             NativeBridge.padAxis(i, AXIS_TRIGGERRIGHT, triggerToS16(gas))
-        } else if (dev.hasAxis(MotionEvent.AXIS_RX) && dev.hasAxis(MotionEvent.AXIS_RY)) {
+        } else if (hasAxis(dev, MotionEvent.AXIS_RX) && hasAxis(dev, MotionEvent.AXIS_RY)) {
             val rx = event.getAxisValue(MotionEvent.AXIS_RX)
             val ry = event.getAxisValue(MotionEvent.AXIS_RY)
             NativeBridge.padAxis(i, AXIS_TRIGGERLEFT, triggerToS16((rx + 1f) / 2f))
@@ -148,6 +148,11 @@ class GamepadBridge {
     }
 
     private val lastDpad = BooleanArray(4)
+
+    /** True when the device reports [axis] from a joystick/gamepad source. */
+    private fun hasAxis(dev: InputDevice, axis: Int): Boolean =
+        dev.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK) != null ||
+            dev.getMotionRange(axis, InputDevice.SOURCE_GAMEPAD) != null
 
     companion object {
         // SDL_GameControllerButton values (protocol order)
@@ -186,7 +191,7 @@ class GamepadBridge {
             KeyEvent.KEYCODE_BUTTON_Y -> BUTTON_Y
             KeyEvent.KEYCODE_BUTTON_L1 -> BUTTON_LEFTSHOULDER
             KeyEvent.KEYCODE_BUTTON_R1 -> BUTTON_RIGHTSHOULDER
-            KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_BACK -> BUTTON_BACK
+            KeyEvent.KEYCODE_BUTTON_SELECT -> BUTTON_BACK
             KeyEvent.KEYCODE_BUTTON_START -> BUTTON_START
             KeyEvent.KEYCODE_BUTTON_THUMBL -> BUTTON_LEFTSTICK
             KeyEvent.KEYCODE_BUTTON_THUMBR -> BUTTON_RIGHTSTICK

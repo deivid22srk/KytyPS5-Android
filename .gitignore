@@ -20,3 +20,4 @@ app/src/main/jniLibs/
 .gradle
 *.apk
 *.aab
+app/.cxx/

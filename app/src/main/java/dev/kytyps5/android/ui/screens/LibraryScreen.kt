@@ -21,7 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VideoGameAsset
+import androidx.compose.material.icons.filled.VideogameAsset
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -34,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -173,7 +174,7 @@ private fun EmptyLibrary(modifier: Modifier, onImport: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
-            Icons.Filled.VideoGameAsset,
+            Icons.Filled.VideogameAsset,
             contentDescription = null,
             modifier = Modifier.size(64.dp),
             tint = MaterialTheme.colorScheme.primary,
@@ -231,7 +232,7 @@ private fun GameCard(game: GameInfo, onPlay: () -> Unit, onDelete: () -> Unit) {
                                 ),
                         )
                         Icon(
-                            Icons.Filled.VideoGameAsset,
+                            Icons.Filled.VideogameAsset,
                             contentDescription = null,
                             modifier = Modifier.size(48.dp).align(Alignment.Center),
                             tint = MaterialTheme.colorScheme.primary,
