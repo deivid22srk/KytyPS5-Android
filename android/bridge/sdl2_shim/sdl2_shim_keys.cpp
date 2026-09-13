@@ -1,0 +1,327 @@
+/*
+ * SDL2 Android-bridge shim — key mapping.
+ *
+ * Neutral keycodes are Android AKEYCODE_* values (public, stable). This file
+ * maps them to SDL_Keycode / key modifiers, and provides SDL_GetKeyFromName
+ * for the emulator's --keymap option.
+ */
+
+#include "sdl2_shim_internal.h"
+
+#include "SDL_keycode.h"
+
+#include <string.h>
+
+extern "C" {
+
+/* Android keycodes (android.view.KeyEvent) */
+enum {
+	KYTY_AKEYCODE_0 = 7,
+	KYTY_AKEYCODE_1 = 8,
+	KYTY_AKEYCODE_2 = 9,
+	KYTY_AKEYCODE_3 = 10,
+	KYTY_AKEYCODE_4 = 11,
+	KYTY_AKEYCODE_5 = 12,
+	KYTY_AKEYCODE_6 = 13,
+	KYTY_AKEYCODE_7 = 14,
+	KYTY_AKEYCODE_8 = 15,
+	KYTY_AKEYCODE_9 = 16,
+	KYTY_AKEYCODE_TAB = 61,
+	KYTY_AKEYCODE_SPACE = 62,
+	KYTY_AKEYCODE_ENTER = 66,
+	KYTY_AKEYCODE_DEL = 67,
+	KYTY_AKEYCODE_GRAVE = 68,
+	KYTY_AKEYCODE_MINUS = 69,
+	KYTY_AKEYCODE_EQUALS = 70,
+	KYTY_AKEYCODE_LEFT_BRACKET = 71,
+	KYTY_AKEYCODE_RIGHT_BRACKET = 72,
+	KYTY_AKEYCODE_BACKSLASH = 73,
+	KYTY_AKEYCODE_SEMICOLON = 74,
+	KYTY_AKEYCODE_APOSTROPHE = 75,
+	KYTY_AKEYCODE_SLASH = 76,
+	KYTY_AKEYCODE_AT = 77,
+	KYTY_AKEYCODE_PLUS = 81,
+	KYTY_AKEYCODE_MENU = 82,
+	KYTY_AKEYCODE_A = 29,
+	KYTY_AKEYCODE_B = 30,
+	KYTY_AKEYCODE_C = 31,
+	KYTY_AKEYCODE_D = 32,
+	KYTY_AKEYCODE_E = 33,
+	KYTY_AKEYCODE_F = 34,
+	KYTY_AKEYCODE_G = 35,
+	KYTY_AKEYCODE_H = 36,
+	KYTY_AKEYCODE_I = 37,
+	KYTY_AKEYCODE_J = 38,
+	KYTY_AKEYCODE_K = 39,
+	KYTY_AKEYCODE_L = 40,
+	KYTY_AKEYCODE_M = 41,
+	KYTY_AKEYCODE_N = 42,
+	KYTY_AKEYCODE_O = 43,
+	KYTY_AKEYCODE_P = 44,
+	KYTY_AKEYCODE_Q = 45,
+	KYTY_AKEYCODE_R = 46,
+	KYTY_AKEYCODE_S = 47,
+	KYTY_AKEYCODE_T = 48,
+	KYTY_AKEYCODE_U = 49,
+	KYTY_AKEYCODE_V = 50,
+	KYTY_AKEYCODE_W = 51,
+	KYTY_AKEYCODE_X = 52,
+	KYTY_AKEYCODE_Y = 53,
+	KYTY_AKEYCODE_Z = 54,
+	KYTY_AKEYCODE_COMMA = 55,
+	KYTY_AKEYCODE_PERIOD = 56,
+	KYTY_AKEYCODE_ALT_LEFT = 57,
+	KYTY_AKEYCODE_ALT_RIGHT = 58,
+	KYTY_AKEYCODE_SHIFT_LEFT = 59,
+	KYTY_AKEYCODE_SHIFT_RIGHT = 60,
+	KYTY_AKEYCODE_DPAD_UP = 19,
+	KYTY_AKEYCODE_DPAD_DOWN = 20,
+	KYTY_AKEYCODE_DPAD_LEFT = 21,
+	KYTY_AKEYCODE_DPAD_RIGHT = 22,
+	KYTY_AKEYCODE_DPAD_CENTER = 23,
+	KYTY_AKEYCODE_VOLUME_UP = 24,
+	KYTY_AKEYCODE_VOLUME_DOWN = 25,
+	KYTY_AKEYCODE_BACK = 111,
+	KYTY_AKEYCODE_FORWARD = 125,
+	KYTY_AKEYCODE_HOME = 122,
+	KYTY_AKEYCODE_END = 123,
+	KYTY_AKEYCODE_INSERT = 124,
+	KYTY_AKEYCODE_PAGE_UP = 92,
+	KYTY_AKEYCODE_PAGE_DOWN = 93,
+	KYTY_AKEYCODE_F1 = 131,
+	KYTY_AKEYCODE_F2 = 132,
+	KYTY_AKEYCODE_F3 = 133,
+	KYTY_AKEYCODE_F4 = 134,
+	KYTY_AKEYCODE_F5 = 135,
+	KYTY_AKEYCODE_F6 = 136,
+	KYTY_AKEYCODE_F7 = 137,
+	KYTY_AKEYCODE_F8 = 138,
+	KYTY_AKEYCODE_F9 = 139,
+	KYTY_AKEYCODE_F10 = 140,
+	KYTY_AKEYCODE_F11 = 141,
+	KYTY_AKEYCODE_F12 = 142,
+	KYTY_AKEYCODE_NUM_LOCK = 143,
+	KYTY_AKEYCODE_NUMPAD_0 = 144,
+	KYTY_AKEYCODE_NUMPAD_1 = 145,
+	KYTY_AKEYCODE_NUMPAD_2 = 146,
+	KYTY_AKEYCODE_NUMPAD_3 = 147,
+	KYTY_AKEYCODE_NUMPAD_4 = 148,
+	KYTY_AKEYCODE_NUMPAD_5 = 149,
+	KYTY_AKEYCODE_NUMPAD_6 = 150,
+	KYTY_AKEYCODE_NUMPAD_7 = 151,
+	KYTY_AKEYCODE_NUMPAD_8 = 152,
+	KYTY_AKEYCODE_NUMPAD_9 = 153,
+	KYTY_AKEYCODE_NUMPAD_DIVIDE = 154,
+	KYTY_AKEYCODE_NUMPAD_MULTIPLY = 155,
+	KYTY_AKEYCODE_NUMPAD_SUBTRACT = 156,
+	KYTY_AKEYCODE_NUMPAD_ADD = 157,
+	KYTY_AKEYCODE_NUMPAD_DOT = 158,
+	KYTY_AKEYCODE_NUMPAD_ENTER = 160,
+	KYTY_AKEYCODE_CTRL_LEFT = 113,
+	KYTY_AKEYCODE_CTRL_RIGHT = 114,
+	KYTY_AKEYCODE_CAPS_LOCK = 115,
+	KYTY_AKEYCODE_SCROLL_LOCK = 116,
+	KYTY_AKEYCODE_META_LEFT = 117,
+	KYTY_AKEYCODE_META_RIGHT = 118,
+};
+
+/* Android meta state (android.view.KeyEvent) */
+enum {
+	KYTY_AMETA_ALT_ON = 0x02,
+	KYTY_AMETA_SHIFT_ON = 0x01,
+	KYTY_AMETA_CTRL_ON = 0x1000,
+	KYTY_AMETA_META_ON = 0x10000,
+	KYTY_AMETA_ALT_LEFT_ON = 0x10,
+	KYTY_AMETA_ALT_RIGHT_ON = 0x20,
+	KYTY_AMETA_SHIFT_LEFT_ON = 0x40,
+	KYTY_AMETA_SHIFT_RIGHT_ON = 0x80,
+	KYTY_AMETA_CTRL_LEFT_ON = 0x2000,
+	KYTY_AMETA_CTRL_RIGHT_ON = 0x4000,
+};
+
+SDL_Keycode ShimKeyFromAndroid(int key) {
+	switch (key) {
+		case KYTY_AKEYCODE_A: return SDLK_a;
+		case KYTY_AKEYCODE_B: return SDLK_b;
+		case KYTY_AKEYCODE_C: return SDLK_c;
+		case KYTY_AKEYCODE_D: return SDLK_d;
+		case KYTY_AKEYCODE_E: return SDLK_e;
+		case KYTY_AKEYCODE_F: return SDLK_f;
+		case KYTY_AKEYCODE_G: return SDLK_g;
+		case KYTY_AKEYCODE_H: return SDLK_h;
+		case KYTY_AKEYCODE_I: return SDLK_i;
+		case KYTY_AKEYCODE_J: return SDLK_j;
+		case KYTY_AKEYCODE_K: return SDLK_k;
+		case KYTY_AKEYCODE_L: return SDLK_l;
+		case KYTY_AKEYCODE_M: return SDLK_m;
+		case KYTY_AKEYCODE_N: return SDLK_n;
+		case KYTY_AKEYCODE_O: return SDLK_o;
+		case KYTY_AKEYCODE_P: return SDLK_p;
+		case KYTY_AKEYCODE_Q: return SDLK_q;
+		case KYTY_AKEYCODE_R: return SDLK_r;
+		case KYTY_AKEYCODE_S: return SDLK_s;
+		case KYTY_AKEYCODE_T: return SDLK_t;
+		case KYTY_AKEYCODE_U: return SDLK_u;
+		case KYTY_AKEYCODE_V: return SDLK_v;
+		case KYTY_AKEYCODE_W: return SDLK_w;
+		case KYTY_AKEYCODE_X: return SDLK_x;
+		case KYTY_AKEYCODE_Y: return SDLK_y;
+		case KYTY_AKEYCODE_Z: return SDLK_z;
+		case KYTY_AKEYCODE_0: return SDLK_0;
+		case KYTY_AKEYCODE_1: return SDLK_1;
+		case KYTY_AKEYCODE_2: return SDLK_2;
+		case KYTY_AKEYCODE_3: return SDLK_3;
+		case KYTY_AKEYCODE_4: return SDLK_4;
+		case KYTY_AKEYCODE_5: return SDLK_5;
+		case KYTY_AKEYCODE_6: return SDLK_6;
+		case KYTY_AKEYCODE_7: return SDLK_7;
+		case KYTY_AKEYCODE_8: return SDLK_8;
+		case KYTY_AKEYCODE_9: return SDLK_9;
+		case KYTY_AKEYCODE_SPACE: return SDLK_SPACE;
+		case KYTY_AKEYCODE_ENTER: return SDLK_RETURN;
+		case KYTY_AKEYCODE_DEL: return SDLK_BACKSPACE;
+		case KYTY_AKEYCODE_TAB: return SDLK_TAB;
+		case KYTY_AKEYCODE_GRAVE: return SDLK_BACKQUOTE;
+		case KYTY_AKEYCODE_MINUS: return SDLK_MINUS;
+		case KYTY_AKEYCODE_EQUALS: return SDLK_EQUALS;
+		case KYTY_AKEYCODE_LEFT_BRACKET: return SDLK_LEFTBRACKET;
+		case KYTY_AKEYCODE_RIGHT_BRACKET: return SDLK_RIGHTBRACKET;
+		case KYTY_AKEYCODE_BACKSLASH: return SDLK_BACKSLASH;
+		case KYTY_AKEYCODE_SEMICOLON: return SDLK_SEMICOLON;
+		case KYTY_AKEYCODE_APOSTROPHE: return SDLK_QUOTE;
+		case KYTY_AKEYCODE_COMMA: return SDLK_COMMA;
+		case KYTY_AKEYCODE_PERIOD: return SDLK_PERIOD;
+		case KYTY_AKEYCODE_SLASH: return SDLK_SLASH;
+		case KYTY_AKEYCODE_AT: return SDLK_AT;
+		case KYTY_AKEYCODE_PLUS: return SDLK_PLUS;
+		case KYTY_AKEYCODE_DPAD_UP: return SDLK_UP;
+		case KYTY_AKEYCODE_DPAD_DOWN: return SDLK_DOWN;
+		case KYTY_AKEYCODE_DPAD_LEFT: return SDLK_LEFT;
+		case KYTY_AKEYCODE_DPAD_RIGHT: return SDLK_RIGHT;
+		case KYTY_AKEYCODE_PAGE_UP: return SDLK_PAGEUP;
+		case KYTY_AKEYCODE_PAGE_DOWN: return SDLK_PAGEDOWN;
+		case KYTY_AKEYCODE_HOME: return SDLK_HOME;
+		case KYTY_AKEYCODE_END: return SDLK_END;
+		case KYTY_AKEYCODE_INSERT: return SDLK_INSERT;
+		case KYTY_AKEYCODE_FORWARD: return SDLK_RIGHT;
+		case KYTY_AKEYCODE_F1: return SDLK_F1;
+		case KYTY_AKEYCODE_F2: return SDLK_F2;
+		case KYTY_AKEYCODE_F3: return SDLK_F3;
+		case KYTY_AKEYCODE_F4: return SDLK_F4;
+		case KYTY_AKEYCODE_F5: return SDLK_F5;
+		case KYTY_AKEYCODE_F6: return SDLK_F6;
+		case KYTY_AKEYCODE_F7: return SDLK_F7;
+		case KYTY_AKEYCODE_F8: return SDLK_F8;
+		case KYTY_AKEYCODE_F9: return SDLK_F9;
+		case KYTY_AKEYCODE_F10: return SDLK_F10;
+		case KYTY_AKEYCODE_F11: return SDLK_F11;
+		case KYTY_AKEYCODE_F12: return SDLK_F12;
+		case KYTY_AKEYCODE_CAPS_LOCK: return SDLK_CAPSLOCK;
+		case KYTY_AKEYCODE_SCROLL_LOCK: return SDLK_SCROLLLOCK;
+		case KYTY_AKEYCODE_NUM_LOCK: return SDLK_NUMLOCKCLEAR;
+		case KYTY_AKEYCODE_NUMPAD_0: return SDLK_KP_0;
+		case KYTY_AKEYCODE_NUMPAD_1: return SDLK_KP_1;
+		case KYTY_AKEYCODE_NUMPAD_2: return SDLK_KP_2;
+		case KYTY_AKEYCODE_NUMPAD_3: return SDLK_KP_3;
+		case KYTY_AKEYCODE_NUMPAD_4: return SDLK_KP_4;
+		case KYTY_AKEYCODE_NUMPAD_5: return SDLK_KP_5;
+		case KYTY_AKEYCODE_NUMPAD_6: return SDLK_KP_6;
+		case KYTY_AKEYCODE_NUMPAD_7: return SDLK_KP_7;
+		case KYTY_AKEYCODE_NUMPAD_8: return SDLK_KP_8;
+		case KYTY_AKEYCODE_NUMPAD_9: return SDLK_KP_9;
+		case KYTY_AKEYCODE_NUMPAD_DIVIDE: return SDLK_KP_DIVIDE;
+		case KYTY_AKEYCODE_NUMPAD_MULTIPLY: return SDLK_KP_MULTIPLY;
+		case KYTY_AKEYCODE_NUMPAD_SUBTRACT: return SDLK_KP_MINUS;
+		case KYTY_AKEYCODE_NUMPAD_ADD: return SDLK_KP_PLUS;
+		case KYTY_AKEYCODE_NUMPAD_DOT: return SDLK_KP_PERIOD;
+		case KYTY_AKEYCODE_NUMPAD_ENTER: return SDLK_KP_ENTER;
+		case KYTY_AKEYCODE_ALT_LEFT: return SDLK_LALT;
+		case KYTY_AKEYCODE_ALT_RIGHT: return SDLK_RALT;
+		case KYTY_AKEYCODE_SHIFT_LEFT: return SDLK_LSHIFT;
+		case KYTY_AKEYCODE_SHIFT_RIGHT: return SDLK_RSHIFT;
+		case KYTY_AKEYCODE_CTRL_LEFT: return SDLK_LCTRL;
+		case KYTY_AKEYCODE_CTRL_RIGHT: return SDLK_RCTRL;
+		case KYTY_AKEYCODE_META_LEFT: return SDLK_LGUI;
+		case KYTY_AKEYCODE_META_RIGHT: return SDLK_RGUI;
+		case KYTY_AKEYCODE_MENU: return SDLK_MENU;
+		case KYTY_AKEYCODE_BACK: return SDLK_ESCAPE;
+		default: return SDLK_UNKNOWN;
+	}
+}
+
+uint16_t ShimKeyModFromAndroid(uint32_t meta) {
+	uint16_t mod = 0;
+	if ((meta & KYTY_AMETA_SHIFT_ON) != 0u || (meta & KYTY_AMETA_SHIFT_LEFT_ON) != 0u) {
+		mod |= KMOD_LSHIFT;
+	}
+	if ((meta & KYTY_AMETA_SHIFT_ON) != 0u || (meta & KYTY_AMETA_SHIFT_RIGHT_ON) != 0u) {
+		mod |= KMOD_RSHIFT;
+	}
+	if ((meta & KYTY_AMETA_ALT_ON) != 0u || (meta & KYTY_AMETA_ALT_LEFT_ON) != 0u) {
+		mod |= KMOD_LALT;
+	}
+	if ((meta & KYTY_AMETA_ALT_ON) != 0u || (meta & KYTY_AMETA_ALT_RIGHT_ON) != 0u) {
+		mod |= KMOD_RALT;
+	}
+	if ((meta & KYTY_AMETA_CTRL_ON) != 0u || (meta & KYTY_AMETA_CTRL_LEFT_ON) != 0u) {
+		mod |= KMOD_LCTRL;
+	}
+	if ((meta & KYTY_AMETA_CTRL_ON) != 0u || (meta & KYTY_AMETA_CTRL_RIGHT_ON) != 0u) {
+		mod |= KMOD_RCTRL;
+	}
+	if ((meta & KYTY_AMETA_META_ON) != 0u) {
+		mod |= KMOD_LGUI | KMOD_RGUI;
+	}
+	return mod;
+}
+
+struct KeyNameEntry {
+	const char *name;
+	SDL_Keycode code;
+};
+
+static const KeyNameEntry kKeyNames[] = {
+	{"Space", SDLK_SPACE},     {"Return", SDLK_RETURN},      {"Escape", SDLK_ESCAPE},
+	{"Backspace", SDLK_BACKSPACE}, {"Tab", SDLK_TAB},        {"Delete", SDLK_DELETE},
+	{"Insert", SDLK_INSERT},   {"Home", SDLK_HOME},          {"End", SDLK_END},
+	{"PageUp", SDLK_PAGEUP},   {"PageDown", SDLK_PAGEDOWN},  {"Left", SDLK_LEFT},
+	{"Right", SDLK_RIGHT},     {"Up", SDLK_UP},              {"Down", SDLK_DOWN},
+	{"LShift", SDLK_LSHIFT},   {"RShift", SDLK_RSHIFT},      {"LCtrl", SDLK_LCTRL},
+	{"RCtrl", SDLK_RCTRL},     {"LAlt", SDLK_LALT},          {"RAlt", SDLK_RALT},
+	{"LGui", SDLK_LGUI},       {"RGui", SDLK_RGUI},          {"Menu", SDLK_MENU},
+	{"CapsLock", SDLK_CAPSLOCK}, {"F1", SDLK_F1},            {"F2", SDLK_F2},
+	{"F3", SDLK_F3},           {"F4", SDLK_F4},              {"F5", SDLK_F5},
+	{"F6", SDLK_F6},           {"F7", SDLK_F7},              {"F8", SDLK_F8},
+	{"F9", SDLK_F9},           {"F10", SDLK_F10},            {"F11", SDLK_F11},
+	{"F12", SDLK_F12},         {"Grave", SDLK_BACKQUOTE},    {"Minus", SDLK_MINUS},
+	{"Equals", SDLK_EQUALS},   {"LeftBracket", SDLK_LEFTBRACKET}, {"RightBracket", SDLK_RIGHTBRACKET},
+	{"Backslash", SDLK_BACKSLASH}, {"Semicolon", SDLK_SEMICOLON}, {"Apostrophe", SDLK_QUOTE},
+	{"Comma", SDLK_COMMA},     {"Period", SDLK_PERIOD},      {"Slash", SDLK_SLASH},
+};
+
+SDL_Keycode SDL_GetKeyFromName(const char *name) {
+	if (name == nullptr || name[0] == '\0') {
+		return SDLK_UNKNOWN;
+	}
+	if (name[1] == '\0') {
+		/* single character: letters and digits */
+		char c = name[0];
+		if (c >= 'a' && c <= 'z') {
+			return (SDL_Keycode)(SDLK_a + (c - 'a'));
+		}
+		if (c >= 'A' && c <= 'Z') {
+			return (SDL_Keycode)(SDLK_a + (c - 'A'));
+		}
+		if (c >= '0' && c <= '9') {
+			return (SDL_Keycode)(SDLK_0 + (c - '0'));
+		}
+	}
+	for (const auto &entry: kKeyNames) {
+		if (strcmp(entry.name, name) == 0) {
+			return entry.code;
+		}
+	}
+	return SDLK_UNKNOWN;
+}
+
+} /* extern "C" */

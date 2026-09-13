@@ -1,0 +1,106 @@
+diff --git a/src/elfs/elfloader.c b/src/elfs/elfloader.c
+index 990e9b8..f3d7bf6 100644
+--- a/src/elfs/elfloader.c
++++ b/src/elfs/elfloader.c
+@@ -48,6 +48,13 @@
+ #include "../emu/x64run_private.h"
+ #include "../tools/bridge_private.h"
+ #include "x64tls.h"
++#ifdef __ANDROID__
++/* bionic: off_t is 64-bit, the *64 glibc aliases do not exist */
++#define fseeko64 fseeko
++#define ftello64 ftello
++#define fopen64  fopen
++#endif
++
+ 
+ #ifndef STATICBUILD
+ void startMallocHook();
+diff --git a/src/elfs/elfparser.c b/src/elfs/elfparser.c
+index 2d63cf4..4751253 100644
+--- a/src/elfs/elfparser.c
++++ b/src/elfs/elfparser.c
+@@ -10,6 +10,15 @@
+ #include "debug.h"
+ #include "elfload_dump.h"
+ #include "elfloader_private.h"
++#ifdef __ANDROID__
++/* bionic: off_t is 64-bit, the glibc *64 aliases do not exist */
++#define fseeko64 fseeko
++#define ftello64 ftello
++#define fopen64  fopen
++#define fstat64  fstat
++#define stat64   stat
++#endif
++
+ 
+ #ifndef PN_XNUM 
+ #define PN_XNUM (0xffff)
+diff --git a/src/emu/x64int3.c b/src/emu/x64int3.c
+index c72aa71..4fc0452 100644
+--- a/src/emu/x64int3.c
++++ b/src/emu/x64int3.c
+@@ -35,6 +35,15 @@
+ #include "elfloader.h"
+ #include "elfload_dump.h"
+ #include "elfs/elfloader_private.h"
++#ifdef __ANDROID__
++/* bionic: off_t is 64-bit, the glibc *64 aliases do not exist */
++#define fseeko64 fseeko
++#define ftello64 ftello
++#define fopen64  fopen
++#define fstat64  fstat
++#define stat64   stat
++#endif
++
+ 
+ typedef int32_t (*iFpppp_t)(void*, void*, void*, void*);
+ 
+diff --git a/src/emu/x86int3.c b/src/emu/x86int3.c
+index 8bd32a7..807af87 100755
+--- a/src/emu/x86int3.c
++++ b/src/emu/x86int3.c
+@@ -32,6 +32,15 @@
+ #include "elfloader.h"
+ #include "elfload_dump.h"
+ #include "elfs/elfloader_private.h"
++#ifdef __ANDROID__
++/* bionic: off_t is 64-bit, the glibc *64 aliases do not exist */
++#define fseeko64 fseeko
++#define ftello64 ftello
++#define fopen64  fopen
++#define fstat64  fstat
++#define stat64   stat
++#endif
++
+ 
+ typedef int32_t (*iFpppp_t)(void*, void*, void*, void*);
+ 
+diff --git a/src/wrapped/generated/functions_list.txt b/src/wrapped/generated/functions_list.txt
+index a38dc33..7d26f07 100644
+--- a/src/wrapped/generated/functions_list.txt
++++ b/src/wrapped/generated/functions_list.txt
+@@ -4254,6 +4254,7 @@
+ #() iFEpuvvppp -> iFEpuppp
+ wrappedalure:
+ wrappedalut:
++wrappedandroidshmem:
+ wrappedanl:
+ wrappedatk:
+ - vFp:
+diff --git a/src/wrapped/wrappedvulkan.c b/src/wrapped/wrappedvulkan.c
+index adf0b93..40822cd 100644
+--- a/src/wrapped/wrappedvulkan.c
++++ b/src/wrapped/wrappedvulkan.c
+@@ -21,7 +21,11 @@
+ 
+ //extern char* libvulkan;
+ 
++#ifdef __ANDROID__
++const char* vulkanName = "libvulkan.so";
++#else
+ const char* vulkanName = "libvulkan.so.1";
++#endif
+ #define LIBNAME vulkan
+ 
+ typedef void(*vFpUp_t)      (void*, uint64_t, void*);

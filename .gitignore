@@ -10,3 +10,13 @@ _PipelineCache/
 _SaveData/
 _TempData/
 _logs/
+
+# Android port
+local.properties
+.gradle/
+app/build/
+app/src/main/assets/kyty/
+app/src/main/jniLibs/
+.gradle
+*.apk
+*.aab
