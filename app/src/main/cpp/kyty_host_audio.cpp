@@ -57,7 +57,7 @@ static aaudio_data_callback_result_t HostAudioCallback(AAudioStream *stream, voi
         size_t done = 0;
         while (done < want) {
                 uint32_t head = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
-                uint32_t tail = ring->tail;
+                uint32_t tail = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
                 uint32_t used = head - tail;
                 if (used == 0) {
                         break; /* underrun */
@@ -135,6 +135,11 @@ static void HostAudioThread(int shm_slot) {
                 s.audio[shm_slot].stream = nullptr;
         }
         delete cb_data;
+        /* recycle the slot so the guest can reopen this device index:
+         * SDL_OpenAudioDevice only accepts state==0 slots, and the guest
+         * parks closed devices at state==2 — without this reset, four
+         * open/close cycles exhaust every slot */
+        __atomic_store_n(&slot->state, 0u, __ATOMIC_RELEASE);
         ALOGI("audio slot %d closed", shm_slot);
 }
 
@@ -162,7 +167,12 @@ void HostAudioMonitorMain() {
                                                 HostState &st = Host();
                                                 st.audio[i].active.store(false);
                                         };
+                                        /* detached lifecycle: assigning over a
+                                         * joinable (finished) std::thread calls
+                                         * std::terminate(); the slot is guarded by
+                                         * the active flag, not by joining */
                                         s.audio[i].thread = std::thread(run);
+                                        s.audio[i].thread.detach();
                                 }
                         }
                 }

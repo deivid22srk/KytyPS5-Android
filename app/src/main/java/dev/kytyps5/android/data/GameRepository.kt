@@ -38,16 +38,20 @@ class GameRepository(private val context: Context) {
                 if (eboot == null) {
                     return@mapNotNull null
                 }
-                val sfo = File(dir, "sce_sys/param.sfo")
+                /* the emulator needs eboot.bin at the game dir root; games
+                 * imported with an extra nesting level launch from the dir
+                 * that actually contains it */
+                val gameDir = eboot.parentFile ?: dir
+                val sfo = File(gameDir, "sce_sys/param.sfo")
                 val map = if (sfo.exists()) ParamSfo.parse(sfo) else emptyMap()
                 GameInfo(
-                    installDir = dir,
-                    title = ParamSfo.title(map).ifEmpty { dir.name },
-                    titleId = ParamSfo.titleId(map).ifEmpty { dir.name },
+                    installDir = gameDir,
+                    title = ParamSfo.title(map).ifEmpty { gameDir.name },
+                    titleId = ParamSfo.titleId(map).ifEmpty { gameDir.name },
                     appVersion = ParamSfo.appVersion(map),
                     contentId = ParamSfo.contentId(map),
                     category = ParamSfo.category(map),
-                    sizeBytes = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() },
+                    sizeBytes = gameDir.walkTopDown().filter { it.isFile }.sumOf { it.length() },
                 )
             }
             ?.sortedBy { it.title.lowercase() }
@@ -104,7 +108,12 @@ class GameRepository(private val context: Context) {
             bytes = b
             onProgress(f, b)
         }
-        return if (found) target else null
+        if (!found) {
+            /* no eboot.bin -> not a game: do not leave a partial copy around */
+            target.deleteRecursively()
+            return null
+        }
+        return target
     }
 
     private fun queryDisplayName(uri: Uri): String? =

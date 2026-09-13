@@ -58,6 +58,7 @@ struct HostState {
         /* session */
         std::atomic<bool> running{false};
         std::atomic<int> exit_code{-1};
+        std::atomic<bool> exit_notified{false}; /* HostNotifyExit is once-per-session */
         std::mutex start_mutex; /* one session at a time */
 
         /* log capture (guest stdout/stderr redirected into this file) */
@@ -95,7 +96,6 @@ HostState &Host();
 
 /* lifecycle */
 bool HostInit(const std::string &files_root, const std::string &native_lib_dir);
-void HostShutdown();
 
 /* session: loads libbox64.so, applies env, redirects guest stdio and runs
  * argv (argv[0] = x86_64 emulator path, then its CLI flags). */

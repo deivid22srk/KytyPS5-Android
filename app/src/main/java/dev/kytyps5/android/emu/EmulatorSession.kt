@@ -90,12 +90,20 @@ class EmulatorSession(private val context: Context) {
     val bridgeShm: File
         get() = File(kytyRoot, "bridge.shm")
 
-    /** Real runtime readiness — all three components verified. */
-    fun runtimeReady(): Boolean {
-        val ld = File(rootfsDir, "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2")
-        val ldAlt = File(rootfsDir, "lib64/ld-linux-x86-64.so.2")
-        return emulatorBinary.exists() && box64Ready() && (ld.exists() || ldAlt.exists())
-    }
+    /** Real runtime readiness — all three components verified. The Debian
+     *  rootfs is usr-merged: the loader lives under usr/lib (usr/lib64 is a
+     *  symlink); keep the non-merged paths as legacy fallbacks. */
+    fun runtimeReady(): Boolean =
+        emulatorBinary.exists() && box64Ready() && loaderFile() != null
+
+    /** The dynamic loader file, resolved inside the extracted rootfs. */
+    private fun loaderFile(): File? =
+        listOf(
+            "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2", /* Debian trixie (usr-merged) */
+            "usr/lib64/ld-linux-x86-64.so.2",                  /* symlink into usr/lib */
+            "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",       /* legacy layouts */
+            "lib64/ld-linux-x86-64.so.2",
+        ).asSequence().map { File(rootfsDir, it) }.firstOrNull { it.exists() }
 
     fun runtimeReport(): String {
         val lines = mutableListOf<String>()
@@ -109,9 +117,7 @@ class EmulatorSession(private val context: Context) {
             box64Binary.exists() -> "box64: ok (${box64Binary.length() / (1024 * 1024)} MB)"
             else -> "box64: AUSENTE"
         })
-        val ld = File(rootfsDir, "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2")
-        val ldAlt = File(rootfsDir, "lib64/ld-linux-x86-64.so.2")
-        lines.add(if (ld.exists() || ldAlt.exists()) {
+        lines.add(if (loaderFile() != null) {
             "rootfs x86_64: ok (${rootfsDir.walkTopDown().filter { it.isFile }.sumOf { it.length() } / (1024 * 1024)} MB)"
         } else {
             "rootfs x86_64: AUSENTE"

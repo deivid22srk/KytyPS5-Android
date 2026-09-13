@@ -44,7 +44,7 @@ void HostPushEvent(const KytyBridgeEvent &ev) {
         }
         KytyRingHeader *ring = &s.shm->input_ring;
         uint32_t head = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
-        uint32_t tail = ring->tail;
+        uint32_t tail = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
         if (head - tail >= ring->capacity) {
                 return; /* overflow: drop (the guest is not pumping) */
         }
@@ -330,6 +330,13 @@ std::string HostReadLogTail() {
 
 static void HostNotifyExit(int code) {
         HostState &s = Host();
+        /* once-only: HostKill notifies immediately, but the detached emulator
+         * thread may deliver its own late code afterwards — the first code
+         * wins so the UI is not overwritten after a forced stop */
+        bool expected = false;
+        if (!s.exit_notified.compare_exchange_strong(expected, true)) {
+                return;
+        }
         ALOGI("emulator session ended: code=%d", code);
         if (s.vm != nullptr && s.java_callback != nullptr) {
                 JNIEnv *env = nullptr;
@@ -468,6 +475,7 @@ bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
         mkdir((workdir + "/tmp").c_str(), 0700);
         if (chdir(workdir.c_str()) != 0) {
                 ALOGE("chdir(%s) failed: %s", workdir.c_str(), strerror(errno));
+                return false; /* the guest's relative sandbox paths would all break */
         }
 
         /* environment for box64 and the bridge shim */
@@ -487,6 +495,7 @@ bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
         sa->argv.push_back(nullptr);
 
         s.exit_code.store(-1);
+        s.exit_notified.store(false);
         s.running.store(true);
         s.emu_thread_started = true;
         s.emu_thread_running.store(true);
@@ -557,7 +566,7 @@ static void HostRumbleMain() {
                 bool had = false;
                 for (;;) {
                         uint32_t head = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
-                        uint32_t tail = ring->tail;
+                        uint32_t tail = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
                         if (tail == head) {
                                 break;
                         }
@@ -664,64 +673,6 @@ bool HostInit(const std::string &files_root, const std::string &native_lib_dir) 
         s.initialized = true;
         ALOGI("host bridge ready: %s", s.shm_path.c_str());
         return true;
-}
-
-void HostShutdown() {
-        HostState &s = Host();
-        if (!s.initialized) {
-                return;
-        }
-        s.shutdown.store(true);
-        HostRequestQuit();
-
-        /* give the session a bounded window to exit gracefully, then detach */
-        for (int i = 0; i < 100 && s.emu_thread_running.load(); ++i) {
-                usleep(50000); /* up to 5 s */
-        }
-        if (s.emu_thread_started) {
-                pthread_detach(s.emu_thread); /* app is going down; never join-block */
-        }
-
-        if (s.rumble_thread.joinable()) {
-                s.rumble_thread.join();
-        }
-        if (s.audio_monitor.joinable()) {
-                s.audio_monitor.join();
-        }
-
-        {
-                std::lock_guard<std::mutex> lock(s.audio_mutex);
-                for (auto &slot: s.audio) {
-                        slot.stop.store(true);
-                        if (slot.thread.joinable()) {
-                                slot.thread.detach(); /* detached lifecycle */
-                        }
-                        if (slot.stream != nullptr) {
-                                AAudioStream_requestStop(slot.stream);
-                                AAudioStream_close(slot.stream);
-                                slot.stream = nullptr;
-                        }
-                }
-        }
-
-        if (s.shm != nullptr) {
-                s.shm->host_alive = 0;
-                munmap(s.shm, sizeof(KytyBridgeShm));
-                s.shm = nullptr;
-        }
-        if (s.shm_fd >= 0) {
-                close(s.shm_fd);
-                s.shm_fd = -1;
-        }
-        {
-                std::lock_guard<std::mutex> lock(s.log_mutex);
-                if (s.log_file != nullptr) {
-                        fclose(s.log_file);
-                        s.log_file = nullptr;
-                }
-        }
-        HostClearSurface();
-        s.initialized = false;
 }
 
 } // namespace KytyHost

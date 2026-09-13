@@ -52,6 +52,7 @@ fun AppScreen(activity: MainActivity, screen: Screen, onNavigate: (Screen) -> Un
         NativeBridge.setCallback(EmuCallbacks(session))
         session.ensureInit()
         if (!session.runtimeReady() && RuntimeInstaller.needsInstall(activity)) {
+            installProgress = 0f // show the install screen immediately
             withContext(Dispatchers.IO) {
                 RuntimeInstaller.install(activity) { pct -> installProgress = pct / 100f }
             }

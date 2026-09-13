@@ -103,10 +103,18 @@ SDL_bool SDL_Vulkan_CreateSurface(SDL_Window *window, VkInstance instance,
         uint64_t native_window = 0;
         uint32_t seq = 0;
         for (int i = 0; i < 500; ++i) { /* up to 5 s */
-                seq = g_shim.shm->state.surface_seq;
-                native_window = g_shim.shm->state.native_window;
+                seq = __atomic_load_n(&g_shim.shm->state.surface_seq, __ATOMIC_ACQUIRE);
+                native_window = __atomic_load_n(&g_shim.shm->state.native_window, __ATOMIC_ACQUIRE);
                 if (native_window != 0 && (seq & 1u) != 0u) {
-                        break;
+                        /* re-validate the pair after a compiler barrier: if the
+                         * surface was recreated mid-wait the new seq wins */
+                        uint32_t seq2 = __atomic_load_n(&g_shim.shm->state.surface_seq, __ATOMIC_ACQUIRE);
+                        uint64_t win2 = __atomic_load_n(&g_shim.shm->state.native_window, __ATOMIC_ACQUIRE);
+                        if (seq2 == seq && win2 == native_window) {
+                                break;
+                        }
+                        seq = seq2;
+                        native_window = win2;
                 }
                 struct timespec ts {0, 10 * 1000000};
                 nanosleep(&ts, nullptr);

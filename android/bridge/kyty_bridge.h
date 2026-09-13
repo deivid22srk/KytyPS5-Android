@@ -99,7 +99,7 @@ enum {
         KYTY_ORIENT_PORTRAIT_FLIPPED = 4,
 };
 
-/* one neutral event; 32 bytes, pad-free */
+/* one neutral event; 36 bytes, pad-free */
 typedef struct KytyBridgeEvent {
         uint32_t type;
         int32_t p1;

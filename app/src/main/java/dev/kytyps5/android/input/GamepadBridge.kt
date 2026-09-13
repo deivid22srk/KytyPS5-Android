@@ -141,13 +141,16 @@ class GamepadBridge {
         val right = hatX > 0.5f
         val up = hatY < -0.5f
         val down = hatY > 0.5f
-        if (left != lastDpad[0]) { NativeBridge.padButton(i, BUTTON_DPAD_LEFT, left); lastDpad[0] = left }
-        if (right != lastDpad[1]) { NativeBridge.padButton(i, BUTTON_DPAD_RIGHT, right); lastDpad[1] = right }
-        if (up != lastDpad[2]) { NativeBridge.padButton(i, BUTTON_DPAD_UP, up); lastDpad[2] = up }
-        if (down != lastDpad[3]) { NativeBridge.padButton(i, BUTTON_DPAD_DOWN, down); lastDpad[3] = down }
+        val last = lastDpad.getOrPut(i) { BooleanArray(4) }
+        if (left != last[0]) { NativeBridge.padButton(i, BUTTON_DPAD_LEFT, left); last[0] = left }
+        if (right != last[1]) { NativeBridge.padButton(i, BUTTON_DPAD_RIGHT, right); last[1] = right }
+        if (up != last[2]) { NativeBridge.padButton(i, BUTTON_DPAD_UP, up); last[2] = up }
+        if (down != last[3]) { NativeBridge.padButton(i, BUTTON_DPAD_DOWN, down); last[3] = down }
     }
 
-    private val lastDpad = BooleanArray(4)
+    /** Per-instance hat dedup: one shared array would make pad B's hat
+     *  state suppress pad A's dpad events. */
+    private val lastDpad = HashMap<Int, BooleanArray>()
 
     /** True when the device reports [axis] from a joystick/gamepad source. */
     private fun hasAxis(dev: InputDevice, axis: Int): Boolean =

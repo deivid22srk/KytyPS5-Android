@@ -1,5 +1,6 @@
 package dev.kytyps5.android.ui.screens
 
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -150,6 +151,58 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                             NativeBridge.setSurface(null, 0, 0)
                         }
                     })
+                    /* touches that miss the virtual-pad controls fall through
+                     * to the emulated touchscreen (SDL_FINGERDOWN/MOTION/UP,
+                     * normalized 0..1 coordinates, one finger id per pointer) */
+                    @Suppress("ClickableViewAccessibility")
+                    setOnTouchListener { v, event ->
+                        val w = v.width.toFloat()
+                        val h = v.height.toFloat()
+                        if (w <= 0f || h <= 0f) {
+                            return@setOnTouchListener false
+                        }
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN,
+                            MotionEvent.ACTION_POINTER_DOWN,
+                            -> {
+                                val i = event.actionIndex
+                                NativeBridge.sendFinger(
+                                    event.getPointerId(i), 0,
+                                    event.getX(i) / w, event.getY(i) / h,
+                                )
+                                true
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                for (i in 0 until event.pointerCount) {
+                                    NativeBridge.sendFinger(
+                                        event.getPointerId(i), 1,
+                                        event.getX(i) / w, event.getY(i) / h,
+                                    )
+                                }
+                                true
+                            }
+                            MotionEvent.ACTION_POINTER_UP -> {
+                                val i = event.actionIndex
+                                NativeBridge.sendFinger(
+                                    event.getPointerId(i), 2,
+                                    event.getX(i) / w, event.getY(i) / h,
+                                )
+                                true
+                            }
+                            MotionEvent.ACTION_UP,
+                            MotionEvent.ACTION_CANCEL,
+                            -> {
+                                for (i in 0 until event.pointerCount) {
+                                    NativeBridge.sendFinger(
+                                        event.getPointerId(i), 2,
+                                        event.getX(i) / w, event.getY(i) / h,
+                                    )
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize(),
