@@ -9,7 +9,7 @@
     <string name="importing">Importing game…</string>
     <string name="play">Play</string>
     <string name="no_runtime_title">Runtime not installed</string>
-    <string name="no_runtime_message">The emulator binaries were not found in app storage. Reinstall the runtime from settings (or reinstall the APK).</string>
+    <string name="no_runtime_message">The emulator binaries were not found in app storage. Reinstall the APK to extract the runtime again.</string>
     <string name="vulkan_old">The GPU does not report Vulkan 1.3 — graphics emulation may fail on this device.</string>
     <string name="vulkan_missing">No Vulkan device found on this device.</string>
     <string name="settings_graphics">Graphics</string>
@@ -60,4 +60,9 @@
     <string name="guest_exited">Emulation ended (code %1$d)</string>
     <string name="not_running">Not running</string>
     <string name="runtime_bad">Runtime missing or corrupted</string>
+    <string name="session_restart_hint">Each run uses one box64 session inside the app process. To play again, restart the app.</string>
+    <string name="restart_app">Restart app</string>
+    <string name="back_to_library">Back to library</string>
+    <string name="send_text_title">Send text to the game</string>
+    <string name="send">Send</string>
 </resources>

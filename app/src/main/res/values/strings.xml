@@ -9,7 +9,7 @@
     <string name="importing">Importando jogo…</string>
     <string name="play">Jogar</string>
     <string name="no_runtime_title">Runtime não instalado</string>
-    <string name="no_runtime_message">Os binários do emulador não foram encontrados no armazenamento do app. Reinstale o runtime nas configurações (ou reinstale o APK).</string>
+    <string name="no_runtime_message">Os binários do emulador não foram encontrados no armazenamento do app. Reinstale o APK para extrair o runtime novamente.</string>
     <string name="vulkan_old">A GPU não informa Vulkan 1.3 — a emulação de gráficos pode falhar neste dispositivo.</string>
     <string name="vulkan_missing">Nenhum dispositivo Vulkan encontrado neste aparelho.</string>
     <string name="settings_graphics">Gráficos</string>
@@ -60,4 +60,9 @@
     <string name="guest_exited">Emulação encerrada (código %1$d)</string>
     <string name="not_running">Não está em execução</string>
     <string name="runtime_bad">Runtime ausente ou corrompido</string>
+    <string name="session_restart_hint">Cada execução usa uma sessão box64 dentro do processo do app. Para jogar novamente, reinicie o app.</string>
+    <string name="restart_app">Reiniciar app</string>
+    <string name="back_to_library">Voltar à biblioteca</string>
+    <string name="send_text_title">Enviar texto ao jogo</string>
+    <string name="send">Enviar</string>
 </resources>

@@ -13,6 +13,11 @@
 #include "SDL_touch.h"
 
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <sched.h>
 #include <stdarg.h>
@@ -138,42 +143,39 @@ int ShimBridgeAttach(void) {
                 return 0;
         }
 
-        FILE *f = fopen(path, "rb+"); /* host must have created it */
-        if (f == nullptr) {
+        /* map the host-created bridge file SHARED: the host and the guest share
+         * the same physical pages — this is the entire point of the bridge.
+         * (A plain read() here would freeze a private snapshot and silently
+         * break every event/PCM/rumble transfer.) */
+        int fd = open(path, O_RDWR, 0);
+        if (fd < 0) {
                 ShimSetError("bridge: cannot open %s (%s)", path, strerror(errno));
                 return 0;
         }
 
-        if (fseek(f, 0, SEEK_END) != 0) {
-                fclose(f);
-                ShimSetError("bridge: seek failed");
+        struct stat st {};
+        if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(KytyBridgeShm)) {
+                close(fd);
+                ShimSetError("bridge: shm too small (%lld < %zu)", (long long)st.st_size,
+                             sizeof(KytyBridgeShm));
                 return 0;
         }
-        long size = ftell(f);
-        if (size < (long)sizeof(KytyBridgeShm)) {
-                fclose(f);
-                ShimSetError("bridge: shm too small (%ld < %zu)", size, sizeof(KytyBridgeShm));
-                return 0;
-        }
-        rewind(f);
 
-        void *mem = malloc((size_t)size);
-        if (mem == nullptr || fread(mem, 1, (size_t)size, f) != (size_t)size) {
-                fclose(f);
-                free(mem);
-                ShimSetError("bridge: read failed");
+        void *mem = mmap(nullptr, sizeof(KytyBridgeShm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        close(fd);
+        if (mem == MAP_FAILED) {
+                ShimSetError("bridge: mmap failed (%s)", strerror(errno));
                 return 0;
         }
-        fclose(f);
 
-        KytyBridgeShm *shm = (KytyBridgeShm *)mem;
+        auto *shm = (KytyBridgeShm *)mem;
         if (shm->magic != KYTY_BRIDGE_MAGIC) {
-                free(mem);
+                munmap(shm, sizeof(KytyBridgeShm));
                 ShimSetError("bridge: bad magic");
                 return 0;
         }
         if (shm->version != KYTY_BRIDGE_VERSION) {
-                free(mem);
+                munmap(shm, sizeof(KytyBridgeShm));
                 ShimSetError("bridge: version mismatch (shm=%u, shim=%u)", shm->version,
                              KYTY_BRIDGE_VERSION);
                 return 0;
@@ -204,14 +206,6 @@ static void ShimEnsureCommonInit(void) {
                 g_shim.focused = 1; /* assume focused until told otherwise */
                 g_shim.inited = 1;
         }
-}
-
-static void ShimMaybeStartDrainThread(void) {
-        if (g_shim.drain_running || g_shim.shm == nullptr) {
-                return;
-        }
-        /* drain thread started lazily by event functions; created in sdl2_shim.c below */
-        g_shim.drain_running = 1;
 }
 
 int SDL_Init(Uint32 flags) {
@@ -256,12 +250,26 @@ int SDL_InitSubSystem(Uint32 flags) {
         return 0;
 }
 
+void ShimAudioCloseAll(void); /* sdl2_shim_audio.cpp */
+
 void SDL_QuitSubSystem(Uint32 flags) {
+        if ((flags & SDL_INIT_AUDIO) != 0u) {
+                ShimAudioCloseAll();
+        }
         g_shim.init_flags &= ~flags;
 }
 
 void SDL_Quit(void) {
+        ShimAudioCloseAll();
         g_shim.init_flags = 0;
+        pthread_mutex_lock(&g_shim.ev_mutex);
+        g_shim.ev_quit = 1;
+        pthread_cond_broadcast(&g_shim.ev_cond);
+        pthread_mutex_unlock(&g_shim.ev_mutex);
+        if (g_shim.drain_running) {
+                pthread_join(g_shim.drain_thread, nullptr);
+                g_shim.drain_running = 0;
+        }
         if (g_shim.shm != nullptr) {
                 KYTY_ASTORE(&g_shim.shm->guest_ready, 0u);
         }
@@ -462,6 +470,10 @@ static void ShimApplyNeutralEvent(const KytyBridgeEvent *e) {
                         ev.window.event = SDL_WINDOWEVENT_SIZE_CHANGED;
                         ev.window.data1 = e->p1;
                         ev.window.data2 = e->p2;
+                        if (g_shim.focus_window != nullptr) {
+                                g_shim.focus_window->w = e->p1;
+                                g_shim.focus_window->h = e->p2;
+                        }
                         ShimLocalPush(&ev);
                         ev.window.event = SDL_WINDOWEVENT_RESIZED;
                         break;
@@ -547,27 +559,32 @@ static void *ShimDrainMain(void *arg) {
         return nullptr;
 }
 
+static pthread_once_t g_drain_once = PTHREAD_ONCE_INIT;
+
+static void ShimDrainOnce(void) {
+        g_shim.drain_running = 1;
+        pthread_create(&g_shim.drain_thread, nullptr, ShimDrainMain, nullptr);
+}
+
 static void ShimEnsureDrainThread(void) {
-        if (!g_shim.drain_running) {
-                g_shim.drain_running = 1;
-                pthread_create(&g_shim.drain_thread, nullptr, ShimDrainMain, nullptr);
-        }
+        pthread_once(&g_drain_once, ShimDrainOnce);
 }
 
 /* -------------------------------------------------------------------------- */
 /* event pump API                                                             */
 /* -------------------------------------------------------------------------- */
 
+/* NOTE: the bridge input ring has exactly ONE consumer - the drain thread.
+ * The event API only pops from the local queue; pumping the ring here too
+ * would advance ring->tail twice and duplicate/drop events. */
 int SDL_PollEvent(SDL_Event *event) {
         ShimEnsureDrainThread();
-        ShimPumpRingEvents();
         return ShimLocalPop(event);
 }
 
 int SDL_WaitEvent(SDL_Event *event) {
         ShimEnsureDrainThread();
         for (;;) {
-                ShimPumpRingEvents();
                 if (ShimLocalPop(event)) {
                         return 1;
                 }
@@ -581,29 +598,36 @@ int SDL_WaitEvent(SDL_Event *event) {
 
 int SDL_WaitEventTimeout(SDL_Event *event, int timeout) {
         ShimEnsureDrainThread();
-        ShimPumpRingEvents();
         if (ShimLocalPop(event)) {
                 return 1;
         }
         if (timeout == 0) {
                 return 0;
         }
+        if (timeout < 0) {
+                return SDL_WaitEvent(event); /* SDL semantics: negative = forever */
+        }
 
-        uint64_t deadline = ShimTicks64Ms() + (uint64_t)(timeout < 0 ? 0 : timeout);
+        uint64_t deadline = ShimTicks64Ms() + (uint64_t)timeout;
         for (;;) {
                 pthread_mutex_lock(&g_shim.ev_mutex);
                 if (g_shim.ev_q_tail == g_shim.ev_q_head) {
-                        pthread_cond_wait(&g_shim.ev_cond, &g_shim.ev_mutex);
+                        uint64_t now = ShimTicks64Ms();
+                        if (now < deadline) {
+                                struct timespec ts {};
+                                ts.tv_sec = (time_t)((deadline - now) / 1000u);
+                                ts.tv_nsec = (long)((deadline - now) % 1000u) * 1000000l;
+                                pthread_cond_timedwait(&g_shim.ev_cond, &g_shim.ev_mutex, &ts);
+                        }
                 }
                 pthread_mutex_unlock(&g_shim.ev_mutex);
-                ShimPumpRingEvents();
                 if (ShimLocalPop(event)) {
                         return 1;
                 }
                 if (ShimTicks64Ms() >= deadline) {
                         return 0;
                 }
-                struct timespec sleep_ts {0, 1000000}; /* 1 ms */
+                struct timespec sleep_ts {0, 500000}; /* 0.5 ms */
                 nanosleep(&sleep_ts, nullptr);
         }
 }

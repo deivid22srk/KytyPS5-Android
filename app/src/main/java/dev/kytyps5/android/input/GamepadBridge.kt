@@ -133,14 +133,21 @@ class GamepadBridge {
             NativeBridge.padAxis(i, AXIS_TRIGGERRIGHT, triggerToS16((ry + 1f) / 2f))
         }
 
-        // hat (dpad as axis)
+        // hat (dpad as axis) — deduplicated: only send on state change so a
+        // stream of MotionEvents does not flood the bridge ring
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
         val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        NativeBridge.padButton(i, BUTTON_DPAD_LEFT, hatX < -0.5f)
-        NativeBridge.padButton(i, BUTTON_DPAD_RIGHT, hatX > 0.5f)
-        NativeBridge.padButton(i, BUTTON_DPAD_UP, hatY < -0.5f)
-        NativeBridge.padButton(i, BUTTON_DPAD_DOWN, hatY > 0.5f)
+        val left = hatX < -0.5f
+        val right = hatX > 0.5f
+        val up = hatY < -0.5f
+        val down = hatY > 0.5f
+        if (left != lastDpad[0]) { NativeBridge.padButton(i, BUTTON_DPAD_LEFT, left); lastDpad[0] = left }
+        if (right != lastDpad[1]) { NativeBridge.padButton(i, BUTTON_DPAD_RIGHT, right); lastDpad[1] = right }
+        if (up != lastDpad[2]) { NativeBridge.padButton(i, BUTTON_DPAD_UP, up); lastDpad[2] = up }
+        if (down != lastDpad[3]) { NativeBridge.padButton(i, BUTTON_DPAD_DOWN, down); lastDpad[3] = down }
     }
+
+    private val lastDpad = BooleanArray(4)
 
     companion object {
         // SDL_GameControllerButton values (protocol order)
@@ -159,7 +166,7 @@ class GamepadBridge {
         const val BUTTON_DPAD_DOWN = 12
         const val BUTTON_DPAD_LEFT = 13
         const val BUTTON_DPAD_RIGHT = 14
-        const val BUTTON_TOUCHPAD = 17
+        const val BUTTON_TOUCHPAD = 20 // SDL_CONTROLLER_BUTTON_TOUCHPAD in SDL 2.33
 
         // SDL_GameControllerAxis values
         const val AXIS_LEFTX = 0

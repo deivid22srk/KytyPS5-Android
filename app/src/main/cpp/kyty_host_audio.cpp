@@ -123,7 +123,7 @@ static void HostAudioThread(int shm_slot) {
 	AAudioStream_requestStart(stream);
 	ALOGI("audio slot %d started: %d Hz, %u ch, fmt %u", shm_slot, freq, channels, fmt);
 
-	while (!s.shutdown.load() &&
+	while (!s.shutdown.load() && !s.audio[shm_slot].stop.load() &&
 	       __atomic_load_n(&slot->state, __ATOMIC_ACQUIRE) == 1u) {
 		usleep(100000);
 	}
@@ -174,6 +174,38 @@ void HostAudioMonitorMain() {
 /* Vulkan device enumeration (for the settings screen — real devices)         */
 /* -------------------------------------------------------------------------- */
 
+static std::string JsonEscape(const char *s) {
+	std::string out;
+	for (const char *p = s; p != nullptr && *p != '\0'; ++p) {
+		switch (*p) {
+			case '"':
+				out += "\\\"";
+				break;
+			case '\\':
+				out += "\\\\";
+				break;
+			case '\n':
+				out += "\\n";
+				break;
+			case '\r':
+				out += "\\r";
+				break;
+			case '\t':
+				out += "\\t";
+				break;
+			default:
+				if ((unsigned char)*p < 0x20) {
+					char b[8];
+					snprintf(b, sizeof(b), "\\u%04x", (unsigned)*p);
+					out += b;
+				} else {
+					out += *p;
+				}
+		}
+	}
+	return out;
+}
+
 std::string HostEnumerateVulkanDevices() {
 	std::string json = "[]";
 
@@ -203,9 +235,9 @@ std::string HostEnumerateVulkanDevices() {
 			vkGetPhysicalDeviceProperties(devices[i], &props);
 			uint32_t major = VK_VERSION_MAJOR(props.apiVersion);
 			uint32_t minor = VK_VERSION_MINOR(props.apiVersion);
-			json += "{\"index\":" + std::to_string(i) + ",\"name\":\"" + props.deviceName +
-			        "\",\"api\":" + std::to_string(major) + "." + std::to_string(minor) +
-			        ",\"type\":" + std::to_string((int)props.deviceType) + "}";
+			json += "{\"index\":" + std::to_string(i) + ",\"name\":\"" +
+			        JsonEscape(props.deviceName) + "\",\"api\":" + std::to_string(major) + "." +
+			        std::to_string(minor) + ",\"type\":" + std::to_string((int)props.deviceType) + "}"
 			if (i + 1 < count) {
 				json += ",";
 			}

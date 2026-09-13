@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,6 +56,8 @@ import dev.kytyps5.android.R
 import dev.kytyps5.android.Screen
 import dev.kytyps5.android.data.GameInfo
 import dev.kytyps5.android.emu.RuntimeInstaller
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
@@ -67,9 +70,12 @@ fun LibraryScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
     var games by remember { mutableStateOf(activity.repository.scan()) }
     var deleteTarget by remember { mutableStateOf<GameInfo?>(null) }
 
-    // rescan when returning from import or emulation
+    // rescan when returning from import or emulation (off the UI thread:
+    // size accounting walks every file of multi-GB game trees)
     LaunchedEffect(activity.importStatus, activity.screen) {
-        games = activity.repository.scan()
+        games = withContext(Dispatchers.IO) {
+            activity.repository.scan()
+        }
     }
 
     val storageUsed = remember(games) { games.sumOf { it.sizeBytes } }
@@ -190,24 +196,47 @@ private fun GameCard(game: GameInfo, onPlay: () -> Unit, onDelete: () -> Unit) {
                     modifier = Modifier.size(84.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.surfaceVariant,
-                                        MaterialTheme.colorScheme.secondaryContainer,
+                    // real game cover from sce_sys/icon0.png when present
+                    val cover = remember(game.installDir.path) {
+                        val icon = java.io.File(game.installDir, "sce_sys/icon0.png")
+                        if (icon.exists()) {
+                            android.graphics.BitmapFactory.decodeFile(
+                                icon.absolutePath,
+                                android.graphics.BitmapFactory.Options().apply {
+                                    inSampleSize = 4
+                                },
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                    if (cover != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = cover.asImageBitmap(),
+                            contentDescription = game.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        )
+                    } else {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.surfaceVariant,
+                                            MaterialTheme.colorScheme.secondaryContainer,
+                                        )
                                     )
-                                )
-                            ),
-                    )
-                    Icon(
-                        Icons.Filled.VideoGameAsset,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp).align(Alignment.Center),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                                ),
+                        )
+                        Icon(
+                            Icons.Filled.VideoGameAsset,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp).align(Alignment.Center),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
@@ -235,7 +264,18 @@ private fun GameCard(game: GameInfo, onPlay: () -> Unit, onDelete: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AssistChip(onClick = {}, label = { Text(game.category.ifEmpty { "gd" }) })
+                // informational label (not a button)
+                Surface(
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        game.category.ifEmpty { "gd" },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
                 Row {
                     IconButton(onClick = onDelete) {
                         Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))

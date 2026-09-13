@@ -1,9 +1,18 @@
 /*
- * KytyPS5 Android port — ARM64 host library (runs in the app process).
+ * KytyPS5 Android port — host library (runs in the app process).
  *
- * Owns the ANativeWindow, the shared-memory bridge, the box64 child process,
- * AAudio playback and input injection for the x86_64 emulator that runs
- * under box64 translation.
+ * Owns the ANativeWindow, the shared-memory bridge, in-process box64
+ * execution of the x86_64 emulator, AAudio playback and input injection.
+ *
+ * Process model (in-process, Winlator-style):
+ *   - libbox64.so is dlopen()ed here and box64_main() is called on a
+ *     dedicated pthread with a large stack. The x86_64 emulator therefore
+ *     runs INSIDE the app process, which keeps the ANativeWindow pointer
+ *     (published through the bridge) valid for vkCreateAndroidSurfaceKHR.
+ *   - The guest's exit() is bridged back by a box64 patch (longjmp), so a
+ *     guest error path ends the session instead of killing the app.
+ *   - Guest stdout/stderr are redirected to a real log file via freopen()
+ *     and streamed to the UI.
  */
 
 #ifndef KYTY_ANDROID_HOST_H_
@@ -14,6 +23,7 @@
 #include <aaudio/AAudio.h>
 #include <android/native_window.h>
 #include <jni.h>
+#include <setjmp.h>
 #include <vulkan/vulkan.h>
 
 #include <atomic>
@@ -27,54 +37,57 @@
 namespace KytyHost {
 
 struct HostState {
-        bool initialized = false;
+	bool initialized = false;
 
-        std::string files_root;      /* <filesDir>/kyty */
-        std::string native_lib_dir;  /* applicationInfo.nativeLibraryDir */
+	std::string files_root;      /* <filesDir>/kyty */
+	std::string native_lib_dir;  /* applicationInfo.nativeLibraryDir */
 
-        /* bridge */
-        int shm_fd = -1;
-        std::string shm_path;
-        KytyBridgeShm *shm = nullptr;
+	/* bridge */
+	int shm_fd = -1;
+	std::string shm_path;
+	KytyBridgeShm *shm = nullptr;
 
-        /* child process */
-        std::mutex proc_mutex;
-        pid_t child_pid = -1;
-        std::atomic<bool> running{false};
-        std::atomic<int> exit_code{-1};
-        int stdout_pipe = -1;
-        int stderr_pipe = -1;
-        std::thread reader_thread;
-        std::thread waiter_thread;
-        std::thread rumble_thread;
+	/* in-process box64 */
+	void *box64_lib = nullptr; /* dlopen handle */
+	int (*box64_main)(int argc, const char **argv, char **env) = nullptr;
+	pthread_t emu_thread {};
+	std::atomic<bool> emu_thread_running{false};
+	bool emu_thread_started = false;
 
-        /* log ring */
-        std::mutex log_mutex;
-        std::string log_buffer; /* ring, capped */
-        std::string log_file_path;
-        FILE *log_file = nullptr;
+	/* session */
+	std::atomic<bool> running{false};
+	std::atomic<int> exit_code{-1};
+	std::mutex start_mutex; /* one session at a time */
 
-        /* surface */
-        std::mutex surface_mutex;
-        ANativeWindow *window = nullptr;
-        uint32_t surface_seq_val = 0;
+	/* log capture (guest stdout/stderr redirected into this file) */
+	std::mutex log_mutex;
+	FILE *log_file = nullptr;   /* our side, for tailing */
+	uint64_t log_offset = 0;
+	std::string log_tail_buffer;
 
-        /* audio */
-        std::mutex audio_mutex;
-        struct AudioSlot {
-                std::atomic<bool> active{false};
-                std::atomic<bool> stop{false};
-                std::thread thread;
-                AAudioStream *stream = nullptr;
-                int shm_slot = -1;
-        } audio[KYTY_BRIDGE_MAX_AUDIO_DEVS];
-        std::thread audio_monitor;
+	std::thread rumble_thread;
 
-        /* jvm for callbacks */
-        JavaVM *vm = nullptr;
-        jobject java_callback = nullptr; /* global ref to EmuCallbacks */
+	/* surface */
+	std::mutex surface_mutex;
+	ANativeWindow *window = nullptr;
+	uint32_t surface_seq_val = 0;
 
-        std::atomic<bool> shutdown{false};
+	/* audio */
+	std::mutex audio_mutex;
+	struct AudioSlot {
+		std::atomic<bool> active{false};
+		std::atomic<bool> stop{false};
+		std::thread thread; /* detached lifecycle */
+		AAudioStream *stream = nullptr;
+		int shm_slot = -1;
+	} audio[KYTY_BRIDGE_MAX_AUDIO_DEVS];
+	std::thread audio_monitor;
+
+	/* jvm for callbacks */
+	JavaVM *vm = nullptr;
+	jobject java_callback = nullptr; /* global ref to EmuCallbacks */
+
+	std::atomic<bool> shutdown{false};
 };
 
 HostState &Host();
@@ -83,16 +96,11 @@ HostState &Host();
 bool HostInit(const std::string &files_root, const std::string &native_lib_dir);
 void HostShutdown();
 
-/* process */
-bool HostStart(const std::string &binary, const std::string &workdir,
-               const std::vector<std::string> &args,
+/* session: loads libbox64.so, applies env, redirects guest stdio and runs
+ * argv (argv[0] = x86_64 emulator path, then its CLI flags). */
+bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
                const std::vector<std::pair<std::string, std::string>> &env);
 void HostRequestQuit();
-void HostKill();
-
-/* surface */
-void HostSetSurface(ANativeWindow *window, uint32_t w, uint32_t h);
-void HostClearSurface();
 
 /* input */
 void HostSendKey(int32_t keycode, bool down, uint32_t meta);
@@ -113,6 +121,7 @@ void HostSendOrientation(int32_t orientation);
 void HostPushEvent(const KytyBridgeEvent &ev);
 void HostAudioMonitorMain();
 std::string HostEnumerateVulkanDevices();
+std::string HostReadLogTail(); /* thread-safe tail of the guest log file */
 
 } // namespace KytyHost
 

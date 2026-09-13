@@ -35,7 +35,7 @@ jobs:
 
       - name: Install SDK packages and NDK
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
+          yes | sdkmanager --licenses > /dev/null
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
@@ -49,6 +49,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang lld glslang-tools ninja-build
           clang --version
           glslangValidator --version | head -2
+
+      - name: Bridge protocol integration test (native, host-side)
+        run: |
+          bash scripts/run-bridge-tests.sh
 
       - name: Build box64 (ARM64 Android, dynarec)
         run: |

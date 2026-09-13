@@ -88,9 +88,8 @@ Java_dev_kytyps5_android_emu_NativeBridge_nativeStart(JNIEnv *env, jclass /*cls*
                 }
         }
 
-        std::string binary = args[0];
         std::string workdir = s.files_root + "/data";
-        return HostStart(binary, workdir, args, env_pairs) ? JNI_TRUE : JNI_FALSE;
+        return HostStart(workdir, args, env_pairs) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
@@ -115,11 +114,7 @@ Java_dev_kytyps5_android_emu_NativeBridge_nativeGetExitCode(JNIEnv * /*env*/, jc
 
 JNIEXPORT jstring JNICALL
 Java_dev_kytyps5_android_emu_NativeBridge_nativeReadLog(JNIEnv *env, jclass /*cls*/) {
-        HostState &s = Host();
-        std::lock_guard<std::mutex> lock(s.log_mutex);
-        std::string out = s.log_buffer;
-        s.log_buffer.clear();
-        return env->NewStringUTF(out.c_str());
+        return env->NewStringUTF(HostReadLogTail().c_str());
 }
 
 JNIEXPORT void JNICALL

@@ -1,3 +1,90 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5f3990e..c3d6253 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1345,6 +1345,24 @@ add_library(mainobj OBJECT ${OS_LINUX_SRC} ${ELFLOADER_SRC} ${WRAPPEDS} ${WRAPPE
+ add_dependencies(mainobj generate_git_head_target)
+ add_dependencies(mainobj generate_dynacache_hashes)
+ 
++# Library mode: build libbox64.so for in-process use by Android host apps
++# (requires NOBOX64=ON so the executable target name is free).
++if(ANDROID AND NOBOX64)
++    add_library(${BOX64} SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/box64lib.c)
++    target_link_libraries(${BOX64} mainobj)
++    if(DYNAREC)
++        target_link_libraries(${BOX64} dynarec)
++    endif()
++    target_link_libraries(${BOX64} interpreter)
++    set_target_properties(${BOX64} PROPERTIES ENABLE_EXPORTS ON)
++    add_dependencies(${BOX64} WRAPPERS)
++    if(TERMUX)
++        target_link_libraries(${BOX64} c m dl android-sysv-semaphore)
++    else()
++        target_link_libraries(${BOX64} c m dl)
++    endif()
++endif()
++
+ if(NOT NOBOX64)
+     add_executable(${BOX64})
+     target_link_libraries(${BOX64} mainobj)
+diff --git a/src/box64lib.c b/src/box64lib.c
+new file mode 100644
+index 0000000..3b09293
+--- /dev/null
++++ b/src/box64lib.c
+@@ -0,0 +1,52 @@
++// SPDX-License-Identifier: MIT
++/* box64 library mode — in-process x86_64 emulation for Android hosts.
++ *
++ * Instead of exec()-ing the box64 binary (which wipes the address space and
++ * invalidates host pointers such as ANativeWindow*), an Android host app
++ * dlopen()s libbox64.so and calls box64_main() on a dedicated thread.
++ * The emulated program then runs inside the host process.
++ *
++ * The exit path is bridged back to the caller: when the guest calls exit(),
++ * my_exit() (wrappedlibc.c) longjmp()s back to box64_main's frame when
++ * library mode is active, so the host survives and can report the exit
++ * code. See the KytyPS5 Android port (android/ in the KytyPS5-Android
++ * repository) for the host side.
++ */
++
++#include "core.h"
++
++#include <pthread.h>
++#include <setjmp.h>
++
++/* exported for my_exit() in wrappedlibc.c (same shared object) */
++jmp_buf box64lib_exit_jmp;
++int box64lib_active = 0;
++int box64lib_exit_code = 0;
++pthread_t box64lib_thread;
++
++__attribute__((visibility("default")))
++int box64_main(int argc, const char **argv, char **env)
++{
++    x64emu_t* emu = NULL;
++    elfheader_t* elf_header = NULL;
++
++    box64lib_thread = pthread_self();
++    box64lib_active = 1;
++
++    if (initialize(argc, argv, env, &emu, &elf_header, 1)) {
++        box64lib_active = 0;
++        return -1;
++    }
++
++    int code = setjmp(box64lib_exit_jmp);
++    if (code == 0) {
++        /* normal path: run the emulated program */
++        code = emulate(emu, elf_header);
++        box64lib_active = 0;
++        return code;
++    }
++
++    /* exit() was called by the guest (library-mode longjmp) */
++    box64lib_active = 0;
++    return box64lib_exit_code;
++}
 diff --git a/src/elfs/elfloader.c b/src/elfs/elfloader.c
 index 990e9b8..f3d7bf6 100644
 --- a/src/elfs/elfloader.c
@@ -88,6 +175,53 @@ index a38dc33..7d26f07 100644
  wrappedanl:
  wrappedatk:
  - vFp:
+diff --git a/src/wrapped/wrappedlibc.c b/src/wrapped/wrappedlibc.c
+index f8ef724..c2b0a4b 100644
+--- a/src/wrapped/wrappedlibc.c
++++ b/src/wrapped/wrappedlibc.c
+@@ -5087,16 +5087,27 @@ static void* timed_exit_thread(void* a)
+     _exit(box64_exit_code); // force exit, something is wrong
+ }
+ 
++extern int box64lib_active;
++
+ void startTimedExit()
+ {
+     static int started = 0;
+     if(started)
+         return;
++    #ifdef BOX64LIB
++    if(box64lib_active)
++        return; /* library mode: never _exit() the host process */
++    #endif
+     started = 1;
+     pthread_t exit_thread;
+     pthread_create(&exit_thread, NULL, timed_exit_thread, NULL);
+ }
+ 
++extern jmp_buf box64lib_exit_jmp;
++extern int box64lib_active;
++extern int box64lib_exit_code;
++extern pthread_t box64lib_thread;
++
+ EXPORT void my_exit(x64emu_t* emu, int code)
+ {
+     if(emu->flags.quitonexit) {
+@@ -5107,6 +5118,14 @@ EXPORT void my_exit(x64emu_t* emu, int code)
+     }
+     emu->quit = 1;
+     box64_exit_code = code;
++    #ifdef BOX64LIB
++    /* library mode: return to the host instead of killing the process.
++     * Only safe when called from the thread that entered box64_main(). */
++    if(box64lib_active && pthread_equal(pthread_self(), box64lib_thread)) {
++        box64lib_exit_code = code;
++        longjmp(box64lib_exit_jmp, 1);
++    }
++    #endif
+     endBox64();
+     startTimedExit();
+     exit(code);
 diff --git a/src/wrapped/wrappedvulkan.c b/src/wrapped/wrappedvulkan.c
 index adf0b93..40822cd 100644
 --- a/src/wrapped/wrappedvulkan.c

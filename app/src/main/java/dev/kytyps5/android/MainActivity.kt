@@ -75,6 +75,22 @@ class MainActivity : ComponentActivity() {
         NativeBridge.setCallback()
         session.ensureInit()
         gamepad.onResume()
+        if (screen == Screen.Emulation) {
+            // real app lifecycle forwarded to the guest
+            session.sendLifecycleToGuest(36) // KYTY_EV_APP_EXIT_BG
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (screen == Screen.Emulation) {
+            val orientation = when (newConfig.orientation) {
+                android.content.res.Configuration.ORIENTATION_LANDSCAPE -> 1
+                android.content.res.Configuration.ORIENTATION_PORTRAIT -> 3
+                else -> 0
+            }
+            NativeBridge.sendOrientation(orientation)
+        }
     }
 
     override fun onPause() {

@@ -45,16 +45,25 @@ Vulkan wrapper) would have added risk without adding capability.
 
 ## 3. Architecture
 
+The x86_64 emulator runs **inside the app process** (Winlator-style):
+`libkytyhost.so` dlopen()s `libbox64.so` (a patched box64 built as a shared
+library) and calls `box64_main()` on a dedicated pthread. Since there is no
+`exec()`, the address space — including the `ANativeWindow*` published
+through the bridge — stays valid, which is what makes
+`vkCreateAndroidSurfaceKHR` from the translated guest correct. A box64 patch
+bridges the guest's `exit()` back to the host via `longjmp`, so a guest
+error path ends the *session* instead of killing the app.
+
 ```
-┌─────────────────────────── ARM64 (app process) ───────────────────────────┐
+┌─────────────────────────── one ARM64 app process ─────────────────────────┐
 │  Kotlin/Compose M3 UI                                                     │
 │    library (param.sfo), settings→CLI, logs, SAF import, gamepads          │
 │  libkytyhost.so (this port)                                               │
-│    fork/exec box64 · ANativeWindow publish · AAudio sinks · input inject  │
+│    dlopen(libbox64.so) + box64_main() on a pthread                        │
+│    ANativeWindow publish · AAudio sinks · input inject · vibrator rumble  │
 │    shared-memory bridge (events in, PCM out, rumble back)                 │
-└──────────────┬────────────────────────────────────────────────────────────┘
-               │ exec
-┌──────────────▼──────────── x86_64 (translated by box64) ──────────────────┐
+│  libbox64.so (ARM64 dynarec, in-process)                                  │
+│    translates the x86_64 emulator + game code below                       │
 │  kyty_emulator (unmodified upstream core + android/bridge SDL2 shim)      │
 │    ELF loader · HLE kernel/libs · RDNA2→SPIR-V shader recompiler          │
 │    Vulkan 1.3 host renderer ──► box64 wrappedvulkan ──► ARM64 driver      │
@@ -87,9 +96,10 @@ Key components:
   Vulkan physical-device enumeration for the settings screen.
 - **box64** — built from the pinned upstream commit plus
   `android/box64-patches/android-build.patch` (bionic `fseeko64` aliases;
-  Android Vulkan library name). Compiled as `libbox64.so` in
-  `jniLibs/arm64-v8a` (exec from `nativeLibraryDir` — uncompressed
-  `useLegacyPackaging=false`).
+  Android Vulkan library name; a shared-library build with `box64_main()`;
+  the guest-`exit()` longjmp bridge). Installed as
+  `jniLibs/arm64-v8a/libbox64.so` and dlopen()ed from
+  `nativeLibraryDir` (uncompressed, `useLegacyPackaging=false`).
 - **Runtime rootfs** — minimal Debian amd64 set (libc6, libstdc++6,
   libgcc-s1, zlib1g, libbz2-1.0, liblzma5) shipped as an APK asset and
   extracted on first run; the emulator's dynamic loader and libraries come
@@ -120,5 +130,26 @@ Every user-visible feature maps to a real mechanism:
 - Compatibility equals upstream KytyPS5 (early-development stage: 2D titles
   and a set of UE4/5/Unity games boot in-game on PC); regressions or
   improvements come from upstream, which this port tracks.
+- **Single session per process**: box64's library mode is not re-entrant,
+  so after a session ends the app offers a one-tap restart before another
+  game can be launched.
+- **Hard guest crashes** (a translated SIGSEGV the emulator does not catch,
+  or a guest `_exit()`) take the whole app down, because the emulator runs
+  in-process; logcat carries the details. Normal `exit()` paths are bridged
+  back as a session end with the real exit code.
+- Guest stdio is captured by redirecting the process stdout/stderr to a log
+  file (the emulator logs heavily to stdout); ART's own stdout use is
+  minimal, but the log also contains box64 diagnostics.
 - No DualSense adaptive-trigger haptics on phones (degraded to rumble), no
   LED, no gyro yet (bridge protocol reserves the paths).
+- Games are imported into internal storage (`filesDir`); external-storage
+  libraries are not supported yet.
+
+### CI regression net
+
+`tests/bridge/bridge_protocol_test.cpp` links the *real* SDL2 shim and
+drives it against a host-side bridge: guest attachment (shared-memory
+visibility), event delivery, queued-audio PCM roundtrip, rumble roundtrip
+and shutdown. It runs natively on the CI runner before any APK step — the
+class of bug where the guest reads a private snapshot instead of the shared
+mapping fails this test immediately.

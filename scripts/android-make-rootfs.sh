@@ -18,24 +18,24 @@ trap 'rm -rf "$WORK"' EXIT
 echo "[rootfs] downloading amd64 packages (host glibc must match emulator build)"
 cd "$WORK"
 apt-get download \
-	libc6 \
-	libstdc++6 \
-	libgcc-s1 \
-	zlib1g \
-	libbz2-1.0 \
-	liblzma5
+        libc6 \
+        libstdc++6 \
+        libgcc-s1 \
+        zlib1g \
+        libbz2-1.0 \
+        liblzma5
 
 echo "[rootfs] extracting"
 mkdir -p rootfs
 for deb in *.deb; do
-	dpkg-deb -x "$deb" rootfs/
+        dpkg-deb -x "$deb" rootfs/
 done
 
 # sanity: dynamic loader must exist
 if [ ! -e rootfs/lib64/ld-linux-x86-64.so.2 ] &&
-	[ ! -e rootfs/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 ]; then
-	echo "ERROR: ld-linux-x86-64.so.2 not found in extracted rootfs" >&2
-	exit 1
+        [ ! -e rootfs/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 ]; then
+        echo "ERROR: ld-linux-x86-64.so.2 not found in extracted rootfs" >&2
+        exit 1
 fi
 
 echo "[rootfs] packing"
@@ -43,4 +43,7 @@ mkdir -p "$(dirname "$OUT")"
 tar -czf "$OUT" -C rootfs .
 
 echo "[rootfs] done: $OUT ($(du -h "$OUT" | cut -f1))"
-tar -tzf "$OUT" | head -5
+# note: plain `tar -tzf | head` breaks under `set -o pipefail` (SIGPIPE)
+tar -tzf "$OUT" > /tmp/kyty-rootfs-list.txt
+head -5 /tmp/kyty-rootfs-list.txt
+rm -f /tmp/kyty-rootfs-list.txt

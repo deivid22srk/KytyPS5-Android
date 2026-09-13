@@ -3,9 +3,11 @@
 #
 # Usage: scripts/android-build-box64.sh <repo-root> <android-ndk> <output-lib>
 #
-# Clones box64 at a pinned commit, applies the port's patches, builds with
-# the NDK toolchain (ARM_DYNAREC on) and strips the result into a
-# libbox64.so ready for jniLibs/arm64-v8a.
+# Clones box64 at a pinned commit, applies the port's patches and builds
+# libbox64.so (SHARED library, ARM_DYNAREC on) for in-process use: the host
+# app dlopen()s it and calls box64_main() so the x86_64 emulator runs inside
+# the app process (ANativeWindow pointers stay valid; guest exit() is
+# bridged back to the host via longjmp).
 set -euo pipefail
 
 ROOT="${1:?repo root}"
@@ -21,7 +23,6 @@ git clone --quiet --filter=blob:none "https://github.com/ptitseb/box64" "$WORK/b
 git -C "$WORK/box64" checkout --quiet "$BOX64_COMMIT"
 
 echo "[box64] applying android patches"
-# patch: bionic fseeko64/ftello64 aliases + Android vulkan library name
 git -C "$WORK/box64" apply --verbose "$ROOT/android/box64-patches/android-build.patch"
 
 echo "[box64] configuring (NDK $NDK)"
@@ -32,13 +33,24 @@ cmake -S "$WORK/box64" -B "$WORK/build" -G Ninja \
 	-DCMAKE_ANDROID_ARCH_ABI=arm64-v8a \
 	-DCMAKE_ANDROID_STL_TYPE=none \
 	-DANDROID=ON \
+	-DNOBOX64=ON \
 	-DARM_DYNAREC=ON \
+	-DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 	-DCMAKE_BUILD_TYPE=RelWithDebInfo
 
-echo "[box64] building"
+echo "[box64] building libbox64.so"
 cmake --build "$WORK/build" --parallel "$(nproc)"
 
-"$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" "$WORK/build/box64"
+LIB="$WORK/build/libbox64.so"
+test -f "$LIB" || { echo "ERROR: libbox64.so not produced" >&2; exit 1; }
+
+# verify the library entry point is exported
+"$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$LIB" | grep -q "box64_main" || {
+	echo "ERROR: box64_main not exported from libbox64.so" >&2
+	exit 1
+}
+
+"$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" "$LIB"
 mkdir -p "$(dirname "$OUT")"
-cp "$WORK/build/box64" "$OUT"
+cp "$LIB" "$OUT"
 echo "[box64] done: $OUT ($(du -h "$OUT" | cut -f1))"

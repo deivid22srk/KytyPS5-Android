@@ -107,8 +107,9 @@ static void *ShimAudioCbMain(void *arg_p) {
         ShimAudioDev *dev = arg->dev;
         free(arg);
 
-        const uint32_t bytes_per_frame =
-            (uint32_t)dev->spec.channels * (dev->spec.format == AUDIO_F32LSB ? 4 : 2);
+        const uint32_t bytes_per_sample =
+            (dev->spec.format == AUDIO_F32LSB || dev->spec.format == AUDIO_S32LSB) ? 4 : 2;
+        const uint32_t bytes_per_frame = (uint32_t)dev->spec.channels * bytes_per_sample;
         const uint32_t buf_frames = dev->spec.samples ? dev->spec.samples : 256;
         const uint32_t buf_bytes = buf_frames * bytes_per_frame;
         auto *buf = (uint8_t *)malloc(buf_bytes);
@@ -219,6 +220,14 @@ void SDL_CloseAudioDevice(SDL_AudioDeviceID dev_id) {
         KYTY_ASTORE(&slot->state, 2u);
         pthread_mutex_destroy(&dev->queue_mutex);
         dev->used = 0;
+}
+
+void ShimAudioCloseAll(void) {
+        for (auto &dev: g_audio) {
+                if (dev.used) {
+                        SDL_CloseAudioDevice(dev.id);
+                }
+        }
 }
 
 void SDL_PauseAudioDevice(SDL_AudioDeviceID dev_id, int pause) {

@@ -55,6 +55,11 @@ class EmulatorSession(private val context: Context) {
     private var logJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    /** In-process box64 is single-session per process; a second launch
+     * requires an app restart. */
+    var sessionUsed = false
+        private set
+
     val kytyRoot: File
         get() = File(context.filesDir, "kyty")
 
@@ -119,6 +124,10 @@ class EmulatorSession(private val context: Context) {
         if (NativeBridge.isRunning()) {
             return false
         }
+        if (sessionUsed) {
+            // box64 library mode is single-session per process by design
+            return false
+        }
 
         val emuArgs = settings.toEmulatorArgs(game.installDir.absolutePath, "")
         val argv = mutableListOf<String>()
@@ -156,9 +165,10 @@ class EmulatorSession(private val context: Context) {
         val ok = NativeBridge.start(argv.toTypedArray(), env.toTypedArray())
         if (!ok) {
             _running.value = false
-            _toast.value = "Falha ao iniciar o processo box64"
+            _toast.value = "Falha ao iniciar a sessão box64 (reinicie o app se uma sessão já rodou)"
             return false
         }
+        sessionUsed = true
         startLogPolling()
         return true
     }

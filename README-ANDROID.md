@@ -13,12 +13,15 @@ ARM64 binary translation, the same proven approach used by Winlator.
 
 The upstream emulator core (CPU HLE, kernel, libraries, RDNA 2 → SPIR-V
 shader recompiler, Vulkan 1.3 renderer) is compiled **unchanged** as an
-x86_64 Linux binary and executed under box64's ARM64 dynarec. A small SDL2
-compatibility shim inside the emulator forwards window, input and audio to
-an ARM64 host library through a shared-memory bridge; the host renders into
-the app's `SurfaceView` via `vkCreateAndroidSurfaceKHR` (Adreno/Mali
-drivers), plays audio through AAudio, and feeds touch/virtual/physical
-gamepad input back to the guest.
+x86_64 Linux binary and executed **inside the app process** under box64's
+ARM64 dynarec (the emulator's `exit()` is bridged back so guest errors end
+the session, not the app). A small SDL2 compatibility shim inside the
+emulator forwards window, input and audio to an ARM64 host library through
+a shared-memory bridge; the host renders into the app's `SurfaceView` via
+`vkCreateAndroidSurfaceKHR` (Adreno/Mali drivers), plays audio through
+AAudio, and feeds touch/virtual/physical gamepad input back to the guest.
+A native integration test (`tests/bridge/`) verifies the whole protocol on
+CI before any APK is produced.
 
 Full engineering report: [`docs/PORTING.md`](docs/PORTING.md).
 
@@ -27,11 +30,12 @@ Full engineering report: [`docs/PORTING.md`](docs/PORTING.md).
 The GitHub Actions workflow [`.github/workflows/build.yml`](.github/workflows/build.yml)
 performs the complete build (no local Android setup required):
 
-1. builds box64 (ARM64, Android, dynarec) with the NDK,
-2. builds the x86_64 emulator with the Android bridge (`KYTY_ANDROID_BRIDGE=ON`),
-3. packages a minimal Debian amd64 rootfs,
-4. produces debug and release APKs with everything embedded,
-5. uploads the APKs as workflow artifacts.
+1. runs the bridge protocol integration test (native, host-side),
+2. builds box64 (ARM64, Android, dynarec, library mode) with the NDK,
+3. builds the x86_64 emulator with the Android bridge (`KYTY_ANDROID_BRIDGE=ON`),
+4. packages a minimal Debian amd64 rootfs,
+5. produces debug and release APKs with everything embedded,
+6. uploads the APKs as workflow artifacts.
 
 Manual build on a Linux host with Android SDK/NDK installed:
 
