@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Build the minimal Debian/Ubuntu x86_64 rootfs for the KytyPS5 Android port.
 #
-# Usage: scripts/android-make-rootfs.sh <output-tar.gz>
+# Usage: scripts/android-make-rootfs.sh <output-tar>
+#
+# NOTE: the asset must be a PLAIN tar. aapt2 transparently gunzips assets whose
+# name ends in ".gz" and strips the suffix, so a rootfs.tar.gz would ship as
+# rootfs.tar in the APK and the installer's asset name would not match.
 #
 # The x86_64 kyty_emulator links against: libc, libm, libstdc++, libgcc_s,
 # libz, libbz2, liblzma and the dynamic loader. We pull exactly those
@@ -40,10 +44,10 @@ fi
 
 echo "[rootfs] packing"
 mkdir -p "$(dirname "$OUT")"
-tar -czf "$OUT" -C rootfs .
+tar -cf "$OUT" -C rootfs .
 
 echo "[rootfs] done: $OUT ($(du -h "$OUT" | cut -f1))"
-# note: plain `tar -tzf | head` breaks under `set -o pipefail` (SIGPIPE)
-tar -tzf "$OUT" > /tmp/kyty-rootfs-list.txt
+# note: plain `tar -tf | head` breaks under `set -o pipefail` (SIGPIPE)
+tar -tf "$OUT" > /tmp/kyty-rootfs-list.txt
 head -5 /tmp/kyty-rootfs-list.txt
 rm -f /tmp/kyty-rootfs-list.txt

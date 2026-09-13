@@ -383,11 +383,24 @@ static bool HostLoadBox64(HostState &s) {
         if (s.box64_main != nullptr) {
                 return true;
         }
-        std::string path = s.native_lib_dir + "/libbox64.so";
-        s.box64_lib = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (s.box64_lib == nullptr) {
-                ALOGE("dlopen(%s) failed: %s", path.c_str(), dlerror());
-                return false;
+        /* With useLegacyPackaging=false the library is NOT extracted to
+         * nativeLibraryDir — it lives inside base.apk and is reachable
+         * through the app class-loader namespace by its bare name (the
+         * same mechanism that loaded libkytyhost.so). Try the bare name
+         * first, then the extracted path for devices that do extract. */
+        s.box64_lib = dlopen("libbox64.so", RTLD_NOW | RTLD_LOCAL);
+        const char *err = s.box64_lib != nullptr ? nullptr : dlerror();
+        if (s.box64_lib != nullptr) {
+                ALOGI("libbox64.so loaded via class-loader namespace (APK-embedded)");
+        } else {
+                std::string path = s.native_lib_dir + "/libbox64.so";
+                ALOGI("bare-name dlopen failed (%s); trying %s",
+                      err != nullptr ? err : "unknown", path.c_str());
+                s.box64_lib = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+                if (s.box64_lib == nullptr) {
+                        ALOGE("dlopen(%s) failed: %s", path.c_str(), dlerror());
+                        return false;
+                }
         }
         s.box64_main = (int (*)(int, const char **, char **))dlsym(s.box64_lib, "box64_main");
         if (s.box64_main == nullptr) {
@@ -396,8 +409,13 @@ static bool HostLoadBox64(HostState &s) {
                 s.box64_lib = nullptr;
                 return false;
         }
-        ALOGI("libbox64.so loaded: %s", path.c_str());
+        ALOGI("libbox64.so ready (box64_main resolved)");
         return true;
+}
+
+bool HostBox64Available() {
+        /* real probe: dlopen + dlsym (cached after the first success) */
+        return HostLoadBox64(Host());
 }
 
 bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
@@ -440,7 +458,10 @@ bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
                 s.log_offset = 0;
         }
 
-        /* working directory: the emulator mounts sandbox dirs relative to cwd */
+        /* working directory: the emulator mounts sandbox dirs relative to cwd.
+         * HOME/TMPDIR point inside it, so create it (and tmp/) first. */
+        mkdir(workdir.c_str(), 0700);
+        mkdir((workdir + "/tmp").c_str(), 0700);
         if (chdir(workdir.c_str()) != 0) {
                 ALOGE("chdir(%s) failed: %s", workdir.c_str(), strerror(errno));
         }

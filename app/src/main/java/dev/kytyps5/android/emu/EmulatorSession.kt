@@ -72,14 +72,29 @@ class EmulatorSession(private val context: Context) {
     val box64Binary: File
         get() = File(context.applicationInfo.nativeLibraryDir, "libbox64.so")
 
+    @Volatile
+    private var box64Loadable: Boolean? = null
+
+    /** Real box64 probe: the host side dlopen()s libbox64.so — resolved
+     *  through the class-loader namespace (APK-embedded, since
+     *  extractNativeLibs is off), with the extracted file as fallback.
+     *  Heavy on first call: IO thread only. */
+    fun probeBox64(): Boolean {
+        box64Loadable?.let { return it }
+        box64Loadable = try { NativeBridge.box64Available() } catch (e: UnsatisfiedLinkError) { false }
+        return box64Loadable!!
+    }
+
+    fun box64Ready(): Boolean = box64Loadable ?: box64Binary.exists()
+
     val bridgeShm: File
         get() = File(kytyRoot, "bridge.shm")
 
-    /** Real runtime readiness — all three components must exist on disk. */
+    /** Real runtime readiness — all three components verified. */
     fun runtimeReady(): Boolean {
         val ld = File(rootfsDir, "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2")
         val ldAlt = File(rootfsDir, "lib64/ld-linux-x86-64.so.2")
-        return emulatorBinary.exists() && box64Binary.exists() && (ld.exists() || ldAlt.exists())
+        return emulatorBinary.exists() && box64Ready() && (ld.exists() || ldAlt.exists())
     }
 
     fun runtimeReport(): String {
@@ -89,10 +104,10 @@ class EmulatorSession(private val context: Context) {
         } else {
             "kyty_emulator: AUSENTE"
         })
-        lines.add(if (box64Binary.exists()) {
-            "box64: ok (${box64Binary.length() / (1024 * 1024)} MB)"
-        } else {
-            "box64: AUSENTE"
+        lines.add(when {
+            box64Loadable == true -> "box64: ok (APK embutido, carregavel)"
+            box64Binary.exists() -> "box64: ok (${box64Binary.length() / (1024 * 1024)} MB)"
+            else -> "box64: AUSENTE"
         })
         val ld = File(rootfsDir, "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2")
         val ldAlt = File(rootfsDir, "lib64/ld-linux-x86-64.so.2")
@@ -131,7 +146,8 @@ class EmulatorSession(private val context: Context) {
 
         val emuArgs = settings.toEmulatorArgs(game.installDir.absolutePath, "")
         val argv = mutableListOf<String>()
-        argv.add(box64Binary.absolutePath) // argv[0]: executable = box64
+        /* HostStart prepends box64's own argv[0]; argv[1] (first entry here)
+         * is the x86_64 program box64 loads, remaining are its arguments. */
         argv.add(emulatorBinary.absolutePath)
         argv.addAll(emuArgs)
 

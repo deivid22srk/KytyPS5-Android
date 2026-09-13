@@ -1,16 +1,18 @@
 package dev.kytyps5.android.emu
 
 import android.content.Context
+import android.util.Log
 import java.io.File
 import java.io.InputStream
-import java.util.zip.GZIPInputStream
 
 /**
  * Installs the x86_64 emulator runtime from APK assets into app storage.
  *
  * The APK bundles:
  *   assets/kyty/bin/kyty_emulator          — x86_64 Linux ELF (runs under box64)
- *   assets/kyty/rootfs.tar.gz              — minimal Debian x86_64 sysroot (GNU tar)
+ *   assets/kyty/rootfs.tar                 — minimal Debian x86_64 sysroot (GNU tar,
+ *                                           uncompressed — aapt2 strips/gunzips
+ *                                           ".gz" assets, so the name must match)
  *   assets/kyty/runtime_version.txt        — version marker
  * box64 ships as jniLibs/arm64-v8a/libbox64.so and is installed by the
  * package manager directly into nativeLibraryDir.
@@ -19,6 +21,7 @@ object RuntimeInstaller {
 
     private const val ASSET_PREFIX = "kyty"
     private const val VERSION_ASSET = "$ASSET_PREFIX/runtime_version.txt"
+    private const val TAG = "KytyInstall"
 
     fun installedVersion(context: Context): String? {
         val marker = File(File(context.filesDir, "kyty"), "runtime_version.txt")
@@ -34,7 +37,11 @@ object RuntimeInstaller {
     }
 
     fun needsInstall(context: Context): Boolean {
-        val bundled = bundledVersion(context) ?: return false
+        val bundled = bundledVersion(context)
+        if (bundled == null) {
+            Log.e(TAG, "APK does not bundle $VERSION_ASSET — runtime cannot be installed")
+            return false
+        }
         return installedVersion(context) != bundled
     }
 
@@ -46,6 +53,7 @@ object RuntimeInstaller {
         val kytyRoot = File(context.filesDir, "kyty")
         val binDir = File(kytyRoot, "bin")
         binDir.mkdirs()
+        Log.i(TAG, "install start (bundled=${bundledVersion(context)} installed=${installedVersion(context)})")
 
         // 1. emulator binary (raw asset)
         val emuAsset = "$ASSET_PREFIX/bin/kyty_emulator"
@@ -56,26 +64,29 @@ object RuntimeInstaller {
                 }
             }
             File(binDir, "kyty_emulator").setExecutable(true, false)
+            Log.i(TAG, "emulator binary installed: ${File(binDir, "kyty_emulator").length() / (1024 * 1024)} MB")
             onProgress(10)
         } catch (e: Exception) {
+            Log.e(TAG, "emulator asset install failed", e)
             return false
         }
 
-        // 2. rootfs archive (pure-Kotlin tar.gz reader)
-        val rootfsAsset = "$ASSET_PREFIX/rootfs.tar.gz"
+        // 2. rootfs archive (pure-Kotlin tar reader; aapt2 gunzips ".gz" assets
+        // and drops the suffix, so the APK always carries a plain tar here)
+        val rootfsAsset = "$ASSET_PREFIX/rootfs.tar"
         val rootfsDir = File(kytyRoot, "rootfs")
         rootfsDir.mkdirs()
         rootfsDir.deleteRecursively()
         rootfsDir.mkdirs()
         try {
             context.assets.open(rootfsAsset).use { raw ->
-                GZIPInputStream(raw, 1 shl 16).use { gz ->
-                    TarExtractor.extract(gz, rootfsDir) { pct ->
-                        onProgress(10 + (pct * 90) / 100)
-                    }
+                TarExtractor.extract(raw, rootfsDir) { pct ->
+                    onProgress(10 + (pct * 90) / 100)
                 }
             }
+            Log.i(TAG, "rootfs extracted: ${rootfsDir.walkTopDown().filter { it.isFile }.count()} files")
         } catch (e: Exception) {
+            Log.e(TAG, "rootfs asset install failed ($rootfsAsset)", e)
             return false
         }
 
@@ -84,6 +95,7 @@ object RuntimeInstaller {
             File(kytyRoot, "runtime_version.txt").writeText(it)
         }
         onProgress(100)
+        Log.i(TAG, "install complete")
         return true
     }
 }

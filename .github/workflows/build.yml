@@ -76,7 +76,7 @@ jobs:
       - name: Build x86_64 rootfs (Debian runtime libraries)
         run: |
           bash scripts/android-make-rootfs.sh \
-            "$GITHUB_WORKSPACE/app/src/main/assets/kyty/rootfs.tar.gz"
+            "$GITHUB_WORKSPACE/app/src/main/assets/kyty/rootfs.tar"
 
       - name: Write runtime version marker
         run: |
@@ -85,7 +85,7 @@ jobs:
           cat app/src/main/assets/kyty/runtime_version.txt
           echo "--- assets summary ---"
           du -h app/src/main/assets/kyty/bin/kyty_emulator \
-                 app/src/main/assets/kyty/rootfs.tar.gz \
+                 app/src/main/assets/kyty/rootfs.tar \
                  app/src/main/jniLibs/arm64-v8a/libbox64.so
 
       - name: Gradle wrapper permissions

@@ -223,4 +223,11 @@ Java_dev_kytyps5_android_emu_NativeBridge_nativeIsGuestReady(JNIEnv * /*env*/, j
         return (s.shm != nullptr && s.shm->guest_ready != 0u) ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_dev_kytyps5_android_emu_NativeBridge_nativeBox64Available(JNIEnv * /*env*/, jclass /*cls*/) {
+        /* real probe: resolves libbox64.so through the class-loader
+         * namespace (APK-embedded when extractNativeLibs=false) */
+        return HostBox64Available() ? JNI_TRUE : JNI_FALSE;
+}
+
 } /* extern "C" */

@@ -67,6 +67,10 @@ object NativeBridge {
 
     fun isGuestReady(): Boolean = nativeIsGuestReady()
 
+    /** Real dlopen probe of libbox64.so (cached native-side). Heavy on the
+     *  first call — run it off the main thread. */
+    fun box64Available(): Boolean = nativeBox64Available()
+
     // ---- raw JNI ----
     private external fun nativeSetCallback(callback: Any)
     private external fun nativeInit(filesRoot: String, nativeLibDir: String): Boolean
@@ -92,4 +96,5 @@ object NativeBridge {
     private external fun nativeSendOrientation(orientation: Int)
     private external fun nativeEnumerateVulkanDevices(): String
     private external fun nativeIsGuestReady(): Boolean
+    private external fun nativeBox64Available(): Boolean
 }

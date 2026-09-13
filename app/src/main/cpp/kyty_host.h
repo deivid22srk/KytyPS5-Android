@@ -128,6 +128,7 @@ std::string HostEnumerateVulkanDevices();
 std::string HostReadLogTail(); /* thread-safe tail of the guest log file */
 void HostSetSurface(ANativeWindow *window, uint32_t w, uint32_t h);
 void HostClearSurface();
+bool HostBox64Available(); /* real dlopen probe of libbox64.so (cached) */
 
 } // namespace KytyHost
 
