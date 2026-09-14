@@ -5,7 +5,9 @@
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/commandScheduler.h"
 #include "graphics/host_gpu/vma.h"
+#include "graphics/host_gpu/vulkanCommon.h"
 
+#include <cinttypes>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -59,48 +61,89 @@ constexpr size_t WATCHES_RESERVE_CHUNK   = 0x1000;
 	return true;
 }
 
+[[nodiscard]] const char* UsageName(MemoryUsage usage) {
+	switch (usage) {
+		case MemoryUsage::DeviceLocal: return "DeviceLocal";
+		case MemoryUsage::Upload: return "Upload";
+		case MemoryUsage::Download: return "Download";
+		case MemoryUsage::Stream: return "Stream";
+	}
+	return "Unknown";
+}
+
 } // namespace
 
 Buffer::Buffer(GraphicContext& graphics, CommandScheduler& scheduler, MemoryUsage usage,
-               uint64_t cpu_address, vk::BufferUsageFlags flags, uint64_t size)
+               uint64_t cpu_address, vk::BufferUsageFlags flags, uint64_t size,
+               uint64_t fallback_min_size, bool allow_memory_fallback)
     : m_graphics(&graphics), m_scheduler(&scheduler), m_usage(usage), m_cpu_address(cpu_address),
-      m_size(size), m_buffer(std::make_unique<VulkanBuffer>()) {
+      m_buffer(std::make_unique<VulkanBuffer>()) {
 	KYTY_PROFILER_FUNCTION();
 	EXIT_IF(graphics.allocator == nullptr || size == 0);
 
-	vk::BufferCreateInfo buffer_info {};
-	buffer_info.size        = size;
-	buffer_info.usage       = flags;
-	buffer_info.sharingMode = vk::SharingMode::eExclusive;
-
 	const bool with_bda = bool(flags & vk::BufferUsageFlagBits::eShaderDeviceAddress);
-	const VmaAllocationCreateFlags bda_flag =
-	    with_bda ? VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT : 0;
-	VmaAllocationCreateInfo allocation_info {};
-	allocation_info.flags =
-	    VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | bda_flag | AllocationFlags(usage);
-	allocation_info.usage = AllocationUsage(usage);
-	allocation_info.preferredFlags = usage == MemoryUsage::DeviceLocal
-	                                     ? VkMemoryPropertyFlags {}
-	                                     : VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	// Mobile drivers (Turnip/Adreno via kgsl) can refuse large single allocations even when
+	// the heap budget has room, so utility rings retry with halved sizes and a relaxed memory
+	// type instead of aborting the whole boot.
+	uint64_t allocation_size = size;
+	for (;;) {
+		vk::BufferCreateInfo buffer_info {};
+		buffer_info.size        = allocation_size;
+		buffer_info.usage       = flags;
+		buffer_info.sharingMode = vk::SharingMode::eExclusive;
 
-	VmaAllocationInfo allocation_result {};
-	VkBuffer          native_buffer = VK_NULL_HANDLE;
-	const auto        result        = static_cast<vk::Result>(vmaCreateBuffer(
-	    graphics.allocator, static_cast<const VkBufferCreateInfo*>(buffer_info), &allocation_info,
-	    &native_buffer, &m_buffer->memory.allocation, &allocation_result));
-	if (result != vk::Result::eSuccess) {
+		const VmaAllocationCreateFlags bda_flag =
+		    with_bda ? VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT : 0;
+		VmaAllocationCreateInfo allocation_info {};
+		allocation_info.flags =
+		    VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | bda_flag | AllocationFlags(m_usage);
+		allocation_info.usage = AllocationUsage(m_usage);
+		allocation_info.preferredFlags = m_usage == MemoryUsage::DeviceLocal
+		                                     ? VkMemoryPropertyFlags {}
+		                                     : VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+		VmaAllocationInfo allocation_result {};
+		VkBuffer          native_buffer = VK_NULL_HANDLE;
+		const auto        result        = static_cast<vk::Result>(vmaCreateBuffer(
+		    graphics.allocator, static_cast<const VkBufferCreateInfo*>(buffer_info),
+		    &allocation_info, &native_buffer, &m_buffer->memory.allocation, &allocation_result));
+		if (result == vk::Result::eSuccess) {
+			m_buffer->buffer                 = native_buffer;
+			m_buffer->memory.allocation_info = allocation_result;
+			m_size                           = allocation_size;
+			break;
+		}
+
 		graphics.LogMemoryBudget();
+		LOGF("vmaCreateBuffer failed: size=%" PRIu64 " (%" PRIu64 " MiB), usage=%s, "
+		     "shaderDeviceAddress=%d, result=%s\n",
+		     allocation_size, allocation_size >> 20, UsageName(m_usage), with_bda ? 1 : 0,
+		     VulkanToString(result).c_str());
+		if (fallback_min_size != 0 && allocation_size / 2 >= fallback_min_size) {
+			allocation_size /= 2;
+			LOGF("Buffer: retrying utility ring with reduced size %" PRIu64 " MiB\n",
+			     allocation_size >> 20);
+			continue;
+		}
+		if (allow_memory_fallback && m_usage == MemoryUsage::DeviceLocal) {
+			m_usage = MemoryUsage::Upload;
+			LOGF("Buffer: retrying with host-visible memory (device-local unavailable)\n");
+			continue;
+		}
+		EXIT("vmaCreateBuffer failed: size=%" PRIu64 ", usage=%s, shaderDeviceAddress=%d, "
+		     "result=%s\n",
+		     allocation_size, UsageName(m_usage), with_bda ? 1 : 0, VulkanToString(result).c_str());
 	}
-	EXIT_NOT_IMPLEMENTED(result != vk::Result::eSuccess);
+	if (allocation_size != size) {
+		LOGF("Buffer: ring size reduced from %" PRIu64 " MiB to %" PRIu64 " MiB\n", size >> 20,
+		     allocation_size >> 20);
+	}
 
-	m_buffer->buffer                 = native_buffer;
 	m_buffer->usage                  = flags;
-	m_buffer->buffer_size            = size;
-	m_buffer->memory.allocation_info = allocation_result;
-	m_buffer->memory.memory          = allocation_result.deviceMemory;
-	m_buffer->memory.offset          = allocation_result.offset;
-	m_buffer->memory.type            = allocation_result.memoryType;
+	m_buffer->buffer_size            = allocation_size;
+	m_buffer->memory.memory          = m_buffer->memory.allocation_info.deviceMemory;
+	m_buffer->memory.offset          = m_buffer->memory.allocation_info.offset;
+	m_buffer->memory.type            = m_buffer->memory.allocation_info.memoryType;
 	m_buffer->memory.unique_id       = VulkanNextMemoryUniqueId();
 	graphics.device.getBufferMemoryRequirements(m_buffer->buffer, &m_buffer->memory.requirements);
 	if (static_cast<bool>(flags & vk::BufferUsageFlagBits::eShaderDeviceAddress)) {
@@ -115,9 +158,9 @@ Buffer::Buffer(GraphicContext& graphics, CommandScheduler& scheduler, MemoryUsag
 	vmaGetAllocationMemoryProperties(graphics.allocator, m_buffer->memory.allocation, &properties);
 	m_buffer->memory.property = vk::MemoryPropertyFlags(properties);
 	m_is_coherent             = (properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
-	if (allocation_result.pMappedData != nullptr) {
-		m_mapped = {static_cast<uint8_t*>(allocation_result.pMappedData),
-		            static_cast<size_t>(size)};
+	if (m_buffer->memory.allocation_info.pMappedData != nullptr) {
+		m_mapped = {static_cast<uint8_t*>(m_buffer->memory.allocation_info.pMappedData),
+		            static_cast<size_t>(m_size)};
 	}
 	VulkanTrackAllocation(m_buffer->memory);
 }
@@ -246,8 +289,9 @@ void Buffer::Fill(uint64_t offset, uint64_t size, uint32_t value) {
 }
 
 StreamBuffer::StreamBuffer(GraphicContext& graphics, CommandScheduler& scheduler, MemoryUsage usage,
-                           uint64_t size)
-    : Buffer(graphics, scheduler, usage, 0, AllFlags, size) {
+                           uint64_t size, uint64_t fallback_min_size, bool allow_memory_fallback)
+    : Buffer(graphics, scheduler, usage, 0, AllFlags, size, fallback_min_size,
+             allow_memory_fallback) {
 	ReserveWatches(m_current_watches, WATCHES_INITIAL_RESERVE);
 	ReserveWatches(m_previous_watches, WATCHES_INITIAL_RESERVE);
 }

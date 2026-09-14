@@ -29,7 +29,7 @@ FaultManager::FaultManager(GraphicContext& graphics, CommandScheduler& scheduler
       m_caching_pagesize(uint64_t {1} << caching_pagebits),
       m_caching_num_pages(caching_num_pages), m_fault_buffer_size(caching_num_pages / 8),
       m_fault_buffer(graphics, scheduler, MemoryUsage::DeviceLocal, 0, AllFlags,
-                     m_fault_buffer_size),
+                     m_fault_buffer_size, 0, true),
       m_download_buffer(graphics, scheduler, MemoryUsage::Download, 0, AllFlags,
                         MaxPendingFaults * PageFaultAreaSize) {
 	SetVulkanObjectNameF(m_graphics.device, m_fault_buffer.Handle(), "Fault Buffer");

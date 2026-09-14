@@ -197,13 +197,18 @@ BufferCache::BufferCache(GraphicContext& graphics, CommandScheduler& scheduler,
 	  m_fault_manager(graphics, scheduler, *this, CACHING_PAGEBITS, CACHING_NUMPAGES),
 	  m_gds_buffer(graphics, scheduler, MemoryUsage::Stream, 0, AllFlags, GdsBufferSize),
 	  m_bda_pagetable_buffer(graphics, scheduler, MemoryUsage::DeviceLocal, 0, AllFlags,
-	                         BDA_PAGETABLE_SIZE),
+	                         BDA_PAGETABLE_SIZE, 0, true),
 	  m_memory_tracker(page_manager),
-	  m_staging_buffer(graphics, scheduler, MemoryUsage::Upload, 512 * MiB),
-	  m_stream_buffer(graphics, scheduler, MemoryUsage::Stream, 64 * MiB),
-	  m_download_buffer(graphics, scheduler, MemoryUsage::Download, 32 * MiB),
-	  m_device_buffer(graphics, scheduler, MemoryUsage::DeviceLocal, 128 * MiB),
+	  m_staging_buffer(graphics, scheduler, MemoryUsage::Upload, 512 * MiB, 64 * MiB),
+	  m_stream_buffer(graphics, scheduler, MemoryUsage::Stream, 64 * MiB, 16 * MiB),
+	  m_download_buffer(graphics, scheduler, MemoryUsage::Download, 32 * MiB, 8 * MiB),
+	  m_device_buffer(graphics, scheduler, MemoryUsage::DeviceLocal, 128 * MiB, 32 * MiB, true),
 	  m_texture_cache(texture_cache) {
+	LOGF("buffer cache: staging=%" PRIu64 " MiB, stream=%" PRIu64 " MiB, download=%" PRIu64
+	     " MiB, device=%" PRIu64 " MiB, bda-pagetable=%" PRIu64 " MiB\n",
+	     m_staging_buffer.Size() >> 20, m_stream_buffer.Size() >> 20,
+	     m_download_buffer.Size() >> 20, m_device_buffer.Size() >> 20,
+	     m_bda_pagetable_buffer.Size() >> 20);
 	std::memset(m_gds_buffer.Mapped().data(), 0, static_cast<size_t>(m_gds_buffer.Size()));
 	m_gds_buffer.Flush(0, m_gds_buffer.Size());
 	SetVulkanObjectNameF(m_graphics.device, m_bda_pagetable_buffer.Handle(),
@@ -396,7 +401,7 @@ BufferId BufferCache::CreateBuffer(uint64_t vaddr, uint64_t size) {
 
 	const auto id = m_slot_buffers.insert(
 	    m_graphics, m_scheduler, MemoryUsage::DeviceLocal, begin,
-	    AllFlags | vk::BufferUsageFlagBits::eShaderDeviceAddress, end - begin);
+	    AllFlags | vk::BufferUsageFlagBits::eShaderDeviceAddress, end - begin, 0, true);
 	auto&      buffer = m_slot_buffers[id];
 	SetVulkanObjectNameF(m_graphics.device, buffer.Handle(),
 	                     "Kyty.GameBuffer[guest=0x{:016x} size=0x{:x}]", begin, end - begin);

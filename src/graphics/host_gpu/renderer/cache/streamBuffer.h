@@ -37,8 +37,15 @@ inline constexpr vk::BufferUsageFlags AllFlags =
 
 class Buffer {
 public:
+	// fallback_min_size: when non-zero, a failed allocation retries with halved sizes down to
+	// this floor. Only valid for buffers whose size is a pure performance knob (the renderer
+	// utility rings); every consumer already chunks or degrades gracefully on a smaller ring.
+	// allow_memory_fallback: retries a DeviceLocal allocation as Upload (host-visible) memory.
+	// On UMA mobile GPUs both memory types are the same physical RAM, so this only relaxes the
+	// type preference; dedicated/BDA semantics and all access paths are unaffected.
 	Buffer(GraphicContext& graphics, CommandScheduler& scheduler, MemoryUsage usage,
-	       uint64_t cpu_address, vk::BufferUsageFlags flags, uint64_t size);
+	       uint64_t cpu_address, vk::BufferUsageFlags flags, uint64_t size,
+	       uint64_t fallback_min_size = 0, bool allow_memory_fallback = false);
 	~Buffer();
 	KYTY_CLASS_NO_COPY(Buffer);
 
@@ -110,7 +117,8 @@ private:
 class StreamBuffer final: public Buffer {
 public:
 	StreamBuffer(GraphicContext& graphics, CommandScheduler& scheduler, MemoryUsage usage,
-	             uint64_t size);
+	             uint64_t size, uint64_t fallback_min_size = 0,
+	             bool allow_memory_fallback = false);
 
 	[[nodiscard]] std::pair<uint8_t*, uint64_t> Map(uint64_t size, uint64_t alignment = 0,
 	                                                bool allow_wait = true);
