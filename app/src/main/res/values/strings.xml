@@ -75,4 +75,7 @@
     <string name="delete_linked_confirm">Remover este jogo da biblioteca? Os arquivos originais não serão alterados nem excluídos.</string>
     <string name="link_unsupported">Não foi possível acessar esta pasta diretamente. Use “Importar jogo” (com cópia).</string>
     <string name="link_missing">A pasta original deste jogo não está acessível (foi movida ou a permissão foi revogada).</string>
+    <string name="share_diagnostics">Compartilhar diagnóstico</string>
+    <string name="settings_diagnostics">Diagnóstico</string>
+    <string name="diagnostics_desc">Envia o registro do emulador (emulator.log) com o relatório de falhas do box64, informações do aparelho e ajustes atuais — útil para relatar travamentos sem precisar de adb.</string>
 </resources>

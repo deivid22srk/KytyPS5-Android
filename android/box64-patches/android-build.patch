@@ -238,3 +238,95 @@ index adf0b93..40822cd 100644
  #define LIBNAME vulkan
  
  typedef void(*vFpUp_t)      (void*, uint64_t, void*);
+diff --git a/src/librarian/library.c b/src/librarian/library.c
+index 09adb74..43b8475 100644
+--- a/src/librarian/library.c
++++ b/src/librarian/library.c
+@@ -12,6 +12,9 @@
+ #include <errno.h>
+ #include <link.h>
+ #include <stdarg.h>
++#if defined(ANDROID) && !defined(STATICBUILD)
++#include <pthread.h>
++#endif
+ 
+ #include "debug.h"
+ #include "library.h"
+@@ -80,6 +83,11 @@ KHASH_MAP_IMPL_STR(datamap, datamap_t)
+ #else
+ KHASH_MAP_IMPL_STR(datamap, uint64_t)
+ #endif
++#if defined(ANDROID) && !defined(STATICBUILD)
++/* bionic host: backing storage for glibc rtld DATA symbols the host
++ * cannot provide (see GetDataFallbackAndroid below) */
++KHASH_MAP_INIT_STR(datafallback, void*)
++#endif
+ 
+ char* Path2Name(const char* path)
+ {
+@@ -828,6 +836,35 @@ elfheader_t* GetElf(library_t* lib)
+     return lib->e.elf;
+ }
+ 
++#if defined(ANDROID) && !defined(STATICBUILD)
++/* bionic host: glibc rtld data symbols (_rtld_global_ro, _rtld_global,
++ * __stack_chk_guard, ...) exist in no host library, so the dlsym() below
++ * returns NULL and guest GLOB_DAT relocations end up pointing at address 0.
++ * The very first IFUNC resolver in libc then segfaults reading
++ * GLRO(dl_x86_cpu_features) at _rtld_global_ro+0xb8.
++ * Back such symbols with zero-filled buffers of the declared size instead:
++ * zeroed cpu_features make the resolvers pick the baseline (SSE2)
++ * implementations, which is always safe. */
++static pthread_mutex_t s_datafallback_lock = PTHREAD_MUTEX_INITIALIZER;
++static khash_t(datafallback)* s_datafallback = NULL;
++static void* GetDataFallbackAndroid(const char* name, uint64_t size)
++{
++    pthread_mutex_lock(&s_datafallback_lock);
++    if(!s_datafallback)
++        s_datafallback = kh_init(datafallback);
++    khint_t k = kh_get(datafallback, s_datafallback, name);
++    void* p = (k!=kh_end(s_datafallback))?kh_value(s_datafallback, k):NULL;
++    if(!p) {
++        p = box_calloc(1, size?size:sizeof(void*));
++        int ret;
++        k = kh_put(datafallback, s_datafallback, name, &ret);
++        kh_value(s_datafallback, k) = p;
++    }
++    pthread_mutex_unlock(&s_datafallback_lock);
++    return p;
++}
++#endif
++
+ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uintptr_t *addr, uintptr_t *size, int* weak)
+ {
+     void* symbol;
+@@ -839,6 +876,10 @@ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uint
+         symbol = dlsym(lib->w.lib, kh_key(lib->w.datamap, k));
+         if(!symbol)
+             symbol = GetNativeSymbolUnversioned(lib->w.lib, kh_key(lib->w.datamap, k));
++        #if defined(ANDROID)
++        if(!symbol)
++            symbol = GetDataFallbackAndroid(kh_key(lib->w.datamap, k), kh_value(lib->w.datamap, k));
++        #endif
+         #endif
+         if(symbol) {
+             // found!
+diff --git a/src/wrapped/wrappedldlinux_private.h b/src/wrapped/wrappedldlinux_private.h
+index a180d2d..00e6b93 100644
+--- a/src/wrapped/wrappedldlinux_private.h
++++ b/src/wrapped/wrappedldlinux_private.h
+@@ -24,8 +24,12 @@ DATAM(__libc_stack_end, sizeof(void*))
+ #else
+ DATAB(_r_debug, 40)
+ DATA(__pointer_chk_guard, sizeof(void*))
+-DATA(_rtld_global, sizeof(void*))
+-DATA(_rtld_global_ro, sizeof(void*))
++/* Real x86_64 glibc sizes (struct rtld_global / rtld_global_ro of a
++ * ld-linux-x86-64.so.2): IFUNC resolvers read cpu_features at offsets up
++ * to ~0x400, so the old sizeof(void*) declarations overran any backing
++ * buffer and broke COPY relocations. Match the ld.so we ship in rootfs. */
++DATA(_rtld_global, 2888)
++DATA(_rtld_global_ro, 952)
+ #endif
+ #ifndef PPC64LE
+ DATA(__stack_chk_guard, sizeof(void*))

@@ -305,6 +305,23 @@ class MainActivity : ComponentActivity() {
         session.stop(force)
     }
 
+    /** Shares the crash black-box (emulator.log tail + device/runtime info)
+     * through the system share sheet — the feedback loop for guest crashes
+     * needs no adb when this exists. */
+    fun shareDiagnostics() {
+        val text = try {
+            session.crashDiagnostics()
+        } catch (e: Exception) {
+            "erro ao coletar diagnóstico: ${e.message}"
+        }
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_TEXT, text)
+            putExtra(android.content.Intent.EXTRA_TITLE, "KytyPS5-Android diagnóstico")
+        }
+        startActivity(android.content.Intent.createChooser(intent, "Compartilhar diagnóstico"))
+    }
+
     fun clearRuntimeStatus() {
         runtimeStatus = null
     }

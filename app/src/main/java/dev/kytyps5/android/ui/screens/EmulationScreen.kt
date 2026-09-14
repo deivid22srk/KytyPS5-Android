@@ -293,6 +293,7 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                 code = exitCode ?: -1,
                 onBack = { onNavigate(Screen.Library) },
                 onRestart = restartApp,
+                onShare = { activity.shareDiagnostics() },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -327,7 +328,7 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
 
 @Composable
 private fun SessionEndOverlay(code: Int, onBack: () -> Unit, onRestart: () -> Unit,
-                              modifier: Modifier) {
+                              onShare: () -> Unit, modifier: Modifier) {
     Surface(color = Color(0xE6000000), modifier = modifier) {
         Column(
             Modifier.fillMaxSize().padding(32.dp),
@@ -353,6 +354,12 @@ private fun SessionEndOverlay(code: Int, onBack: () -> Unit, onRestart: () -> Un
                 }
                 androidx.compose.material3.Button(onClick = onRestart) {
                     Text(stringResource(R.string.restart_app))
+                }
+            }
+            if (code != 0) {
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.TextButton(onClick = onShare) {
+                    Text(stringResource(R.string.share_diagnostics), color = Color(0xFFB5E0C8))
                 }
             }
         }

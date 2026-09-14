@@ -75,4 +75,7 @@
     <string name="delete_linked_confirm">Remove this game from the library? The original files will not be changed or deleted.</string>
     <string name="link_unsupported">Could not access this folder directly. Use “Import game” (with copy) instead.</string>
     <string name="link_missing">This game\'s original folder is not accessible (moved, or the permission was revoked).</string>
+    <string name="share_diagnostics">Share diagnostics</string>
+    <string name="settings_diagnostics">Diagnostics</string>
+    <string name="diagnostics_desc">Sends the emulator log (emulator.log) with the box64 crash report, device info and current settings — useful to report crashes without adb.</string>
 </resources>

@@ -20,6 +20,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -287,6 +288,16 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                 valueRange = 0f..5f,
                 steps = 4,
             )
+
+            SectionTitle(stringResource(R.string.settings_diagnostics))
+            Text(
+                stringResource(R.string.diagnostics_desc),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = { activity.shareDiagnostics() }) {
+                Text(stringResource(R.string.share_diagnostics))
+            }
 
             Spacer(Modifier.height(24.dp))
         }

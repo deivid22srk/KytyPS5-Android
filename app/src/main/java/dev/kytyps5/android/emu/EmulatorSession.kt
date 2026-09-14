@@ -168,6 +168,15 @@ class EmulatorSession(private val context: Context) {
             "${rootfsDir}/usr/lib/x86_64-linux-gnu:${rootfsDir}/lib/x86_64-linux-gnu:" +
                 "${rootfsDir}/lib64:${rootfsDir}/lib:${rootfsDir}/usr/lib")
         put("BOX64_EMULATED_LIBS", "libvulkan.so.1") // force the wrapped Vulkan
+        // box64 crash black-box: when stdout is not a tty (our log-file
+        // redirect) box64's default log level is NONE, which also silences
+        // its own SIGSEGV report (guest RIP, fault address, si_code, regs).
+        // Force the report, a native backtrace and a rolling log buffer so
+        // any guest crash leaves a full diagnostic in emulator.log.
+        put("BOX64_SHOWSEGV", "1")
+        put("BOX64_SHOWBT", "1")
+        put("BOX64_ROLLING_LOG", "512")
+        put("BOX64_LOG", "1") // INFO: library load + symbol binding trace
         // bridge
         put("KYTY_BRIDGE_SHM", bridgeShm.absolutePath)
         put("KYTY_BASE_PATH", File(emulatorBinary.parentFile, "/").absolutePath)
@@ -228,6 +237,52 @@ class EmulatorSession(private val context: Context) {
     fun onExit(code: Int) {
         _running.value = false
         _exitCode.value = code
+    }
+
+    /** Full crash black-box for bug reports: app/device info, runtime report,
+     * settings, and the tail of the persisted emulator.log — when a guest
+     * crash kills the process, that file keeps box64's own SIGSEGV report
+     * (guest RIP, fault address, si_code, registers, dynablock). */
+    fun crashDiagnostics(): String {
+        val logFile = File(kytyRoot, "logs/emulator.log")
+        val logTail = try {
+            if (logFile.exists()) {
+                val text = logFile.readText(Charsets.UTF_8)
+                if (text.length > 60_000) "…\n${text.takeLast(60_000)}" else text
+            } else {
+                "(emulator.log ausente)"
+            }
+        } catch (e: Exception) {
+            "(erro ao ler emulator.log: ${e.message})"
+        }
+        val settingsJson = try {
+            EmuSettings.fromContext(context).toJson()
+        } catch (e: Exception) {
+            "(erro ao ler settings: ${e.message})"
+        }
+        val versionName = try {
+            val pm = context.packageManager
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(context.packageName, 0).versionName
+        } catch (e: Exception) {
+            "?"
+        }
+        return buildString {
+            appendLine("KytyPS5-Android — diagnóstico de crash")
+            appendLine("app: ${context.packageName} v$versionName")
+            appendLine("device: ${Build.MANUFACTURER} ${Build.MODEL} " +
+                "(Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})")
+            appendLine("abi: ${Build.SUPPORTED_ABIS.joinToString()}")
+            appendLine()
+            appendLine("--- runtime ---")
+            appendLine(runtimeReport())
+            appendLine()
+            appendLine("--- settings ---")
+            appendLine(settingsJson)
+            appendLine()
+            appendLine("--- emulator.log (final) ---")
+            appendLine(logTail)
+        }
     }
 
     fun consumeToast(): String? {
