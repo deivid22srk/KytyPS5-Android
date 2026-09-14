@@ -492,7 +492,24 @@ bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
 
         auto *sa = new SessionArgs();
         sa->storage.reserve(args.size() + 1);
-        sa->storage.push_back("box64"); /* box64's own argv[0] */
+        /* box64's core.c derives my_context->box64path from argv[0] via
+         * ResolveFile() and then does box_strdup(box64path) — a logical
+         * name like "box64" resolves to NULL in library mode (there is no
+         * box64 binary on disk; the code lives inside base.apk) and the
+         * NULL later crashes strdup() on-device (SIGSEGV in
+         * __strlen_aarch64, core.c:1123). Give it a real, absolute path:
+         * a marker file inside the session workdir. */
+        std::string box64_marker = workdir + "/box64";
+        {
+                int mfd = open(box64_marker.c_str(), O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
+                if (mfd < 0) {
+                        ALOGE("cannot create box64 marker (%s): %s",
+                              box64_marker.c_str(), strerror(errno));
+                        return false;
+                }
+                close(mfd);
+        }
+        sa->storage.push_back(box64_marker); /* box64's own argv[0] (resolvable) */
         for (const auto &a: args) {
                 sa->storage.push_back(a);
         }
