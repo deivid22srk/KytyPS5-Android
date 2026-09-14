@@ -672,15 +672,33 @@ public:
 			     backing_size / (1024U * 1024U));
 		}
 #else
-		ReserveGuestRegions();
-		/* The writable alias needs one contiguous host VA range of `backing_size`.
-		 * Custom Vulkan drivers preloaded into the process (adrenotools), box64
-		 * dynarec mappings and the game's loaded segments fragment the 39-bit VA
-		 * space and raise the commit level, so even a 4 GiB reservation can fail
-		 * with ENOMEM depending on the driver (observed: 4 GiB OK with
-		 * wn-turnip-1.06, ENOMEM with turnip_mrpurple_t30). Retry with halved
-		 * sizes instead of dying: the reduced direct-memory size is advertised to
-		 * the game, which still boots (small titles fit). */
+#if KYTY_PLATFORM == KYTY_PLATFORM_LINUX && !defined(__APPLE__)
+		/* Create the writable alias BEFORE the guest-region reservations.
+		 *
+		 * The alias needs one contiguous host VA range of `backing_size` outside
+		 * every owned guest interval. On 48-bit hosts that is trivial: everything
+		 * above HOST_USER_MAX (1 TiB) stays free either way. On 39-bit Android
+		 * kernels TASK_SIZE (512 GiB) lies INSIDE the HOST_USER span, so reserving
+		 * the guest regions first claims every free byte below 512 GiB: the
+		 * /proc/self/maps scan only skips existing mappings, and the final
+		 * sub-range, extending past TASK_SIZE, fails to mmap as a whole, leaving
+		 * only a launch-luck-sized tail. A fresh 4 GiB mmap(NULL) afterwards then
+		 * fails with ENOMEM - observed on a moto g34 5G (Adreno 619, 39-bit VA):
+		 * build b3f1580 died after retrying 2048 MB in one launch while build
+		 * 1bfd631 booted on the same device + driver in another (pure ASLR luck
+		 * of that tail).
+		 *
+		 * Allocating the alias first inverts the odds: at this point the process
+		 * only carries the app/box64/driver mappings, so the kernel's top-down
+		 * allocator always finds a multi-hundred-GiB free run below them. The
+		 * subsequent /proc/self/maps scan sees the alias as occupied and reserves
+		 * the guest regions around it, keeping the alias outside every owned
+		 * guest interval (the boot invariant checked by
+		 * TestGuestBackingOutsideAddressSpace).
+		 *
+		 * Halving retries remain as a safety net for pathological VA budgets; the
+		 * reduced direct-memory size is advertised to the game, which still boots
+		 * (small titles fit). */
 		uint64_t size       = backing_size;
 		uint64_t size_floor = g_flexible_memory_size + (256ull * 1024ull * 1024ull);
 		if (size_floor > backing_size) {
@@ -711,6 +729,19 @@ public:
 				   size / (1024U * 1024U), backing_size / (1024U * 1024U));
 			SetDirectMemoryEffectiveSize(size);
 		}
+		LOGF_COLOR(Log::Color::Green,
+			   "\t direct-memory backing: writable alias at 0x%016" PRIx64
+			   " (%" PRIu64 " MB)\n",
+			   m_backing->GetBackingBase(), size / (1024U * 1024U));
+		ReserveGuestRegions();
+#else
+		ReserveGuestRegions();
+		m_backing = new GuestBackingStore(backing_size);
+		if (!m_backing->IsAvailable()) {
+			EXIT("could not reserve %" PRIu64 " MB for guest direct memory\n",
+			     backing_size / (1024U * 1024U));
+		}
+#endif
 #endif
 	}
 
