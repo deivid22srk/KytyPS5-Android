@@ -405,6 +405,14 @@ static void HostNotifyExit(int code) {
                 return;
         }
         ALOGI("emulator session ended: code=%d", code);
+        /* The guest's window/render loop runs on its own guest thread and
+         * keeps presenting frames (vkAcquireNextImageKHR succeeded 237x for
+         * 22s after a v0.3.2 guest SIGSEGV): the library-mode longjmp recovers
+         * only the thread that entered box64_main, so the render thread stays
+         * orphaned on a dead session. Push the quit event so that loop drains
+         * it and exits on its next frame, exactly like the forced-stop path
+         * in HostKill() (harmless no-op if the loop already exited). */
+        HostRequestQuit();
         if (s.vm != nullptr && s.java_callback != nullptr) {
                 JNIEnv *env = nullptr;
                 bool attached = false;

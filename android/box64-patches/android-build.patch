@@ -3035,3 +3035,100 @@ index adf0b938..0de576b0 100644
  
  #define CUSTOM_INIT \
      lib->w.priv = dlsym(lib->w.lib, "vkGetInstanceProcAddr"); \
+diff --git a/src/custommem.c b/src/custommem.c
+index 3f04927..365c0f1 100644
+--- a/src/custommem.c
++++ b/src/custommem.c
+@@ -683,9 +683,17 @@ void* map128_customMalloc(size_t size, int is32bits)
+     p_blocks[i].size = 0;
+     if(is32bits) mutex_unlock(&mutex_blocks);   // unlocking, because mmap might use it
+     void* p = is32bits
+-        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_32BIT, -1, 0)
+-        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
++        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_32BIT, -1, 0)
++        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0));
++    int mmap_errno = errno;   /* capture before the relock (pthread may touch errno) */
+     if(is32bits) mutex_lock(&mutex_blocks);
++    if(p == MAP_FAILED || (uintptr_t)p > (uintptr_t)-4096ULL) {
++        printf_log(LOG_NONE, "Warning: custommem: mmap for a new 128-byte-map block (0x%zx bytes) failed (errno %d) - VA or commit budget exhausted\n", allocsize, mmap_errno);
++        p_blocks[i].maxfree = 0;
++        errno = ENOMEM;
++        mutex_unlock(&mutex_blocks);
++        return NULL;
++    }
+     #ifdef TRACE_MEMSTAT
+     customMalloc_allocated += allocsize;
+     #endif
+@@ -825,9 +833,17 @@ void* map64_customMalloc(size_t size, int is32bits)
+ 
+     if(is32bits) mutex_unlock(&mutex_blocks);   // unlocking, because mmap might use it
+     void* p = is32bits
+-        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_32BIT, -1, 0)
+-        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
++        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_32BIT, -1, 0)
++        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0));
++    int mmap_errno = errno;   /* capture before the relock (pthread may touch errno) */
+     if(is32bits) mutex_lock(&mutex_blocks);
++    if(p == MAP_FAILED || (uintptr_t)p > (uintptr_t)-4096ULL) {
++        printf_log(LOG_NONE, "Warning: custommem: mmap for a new 64-byte-map block (0x%zx bytes) failed (errno %d) - VA or commit budget exhausted\n", allocsize, mmap_errno);
++        p_blocks[i].maxfree = 0;
++        errno = ENOMEM;
++        mutex_unlock(&mutex_blocks);
++        return NULL;
++    }
+ 
+     #ifdef TRACE_MEMSTAT
+     customMalloc_allocated += allocsize;
+@@ -957,10 +973,18 @@ void* internal_customMalloc(size_t size, int is32bits)
+     if(is32bits)    // unlocking, because mmap might use it
+         mutex_unlock(&mutex_blocks);
+     void* p = is32bits
+-        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_32BIT, -1, 0)
+-        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
++        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_32BIT, -1, 0)
++        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0));
++    int mmap_errno = errno;   /* capture before the relock (pthread may touch errno) */
+     if(is32bits)
+         mutex_lock(&mutex_blocks);
++    if(p == MAP_FAILED || (uintptr_t)p > (uintptr_t)-4096ULL) {
++        printf_log(LOG_NONE, "Warning: custommem: mmap for a new list block (0x%zx bytes) failed (errno %d) - VA or commit budget exhausted\n", allocsize, mmap_errno);
++        p_blocks[i].maxfree = 0;
++        errno = ENOMEM;
++        mutex_unlock(&mutex_blocks);
++        return NULL;
++    }
+ #ifdef TRACE_MEMSTAT
+     customMalloc_allocated += allocsize;
+ #endif
+@@ -1259,10 +1283,18 @@ void* internal_customMemAligned(size_t align, size_t size, int is32bits)
+     if(is32bits)
+         mutex_unlock(&mutex_blocks);
+     void* p = is32bits
+-        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_32BIT, -1, 0)
+-        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
++        ? box_mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_32BIT, -1, 0)
++        : (box64_is32bits ? box32_dynarec_mmap(allocsize, -1, 0) : InternalMmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0));
++    int mmap_errno = errno;   /* capture before the relock (pthread may touch errno) */
+     if(is32bits)
+         mutex_lock(&mutex_blocks);
++    if(p == MAP_FAILED || (uintptr_t)p > (uintptr_t)-4096ULL) {
++        printf_log(LOG_NONE, "Warning: custommem: mmap for a new aligned list block (0x%zx bytes) failed (errno %d) - VA or commit budget exhausted\n", allocsize, mmap_errno);
++        p_blocks[i].maxfree = 0;
++        errno = ENOMEM;
++        mutex_unlock(&mutex_blocks);
++        return NULL;
++    }
+ #ifdef TRACE_MEMSTAT
+     customMalloc_allocated += allocsize;
+ #endif
+@@ -3376,6 +3408,9 @@ void getLockAddressRange(uintptr_t start, size_t size, uintptr_t addrs[])
+ #ifndef MAP_32BIT
+ #define MAP_32BIT 0x40
+ #endif
++#ifndef MAP_NORESERVE
++#define MAP_NORESERVE 0x4000
++#endif
+ 
+ #ifndef NOALIGN
+ #define BOX64_MMAP47_LIMIT (1ULL << 47)
+
