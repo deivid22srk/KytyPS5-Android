@@ -66,6 +66,9 @@ struct HostState {
         FILE *log_file = nullptr;   /* our side, for tailing */
         uint64_t log_offset = 0;
         std::string log_tail_buffer;
+        FILE *log_write = nullptr;      /* drain-thread side write handle */
+        std::thread log_drain_thread;   /* pipe -> emulator.log + logcat mirror */
+        bool log_drain_started = false;
 
         std::thread rumble_thread;
 

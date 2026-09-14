@@ -57,6 +57,7 @@
     <string name="readback_linear">Linear image readback</string>
     <string name="printf_direction">Guest printf output</string>
     <string name="guest_crashed">The emulator exited with code %1$d</string>
+    <string name="guest_signal_crashed">The emulator crashed (signal %1$d). Tap “Share diagnostics” to send the technical report.</string>
     <string name="guest_exited">Emulation ended (code %1$d)</string>
     <string name="not_running">Not running</string>
     <string name="runtime_bad">Runtime missing or corrupted</string>

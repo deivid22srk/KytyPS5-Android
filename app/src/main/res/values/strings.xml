@@ -57,6 +57,7 @@
     <string name="readback_linear">Readback de imagens lineares</string>
     <string name="printf_direction">Saída de printf do guest</string>
     <string name="guest_crashed">O emulador encerrou com código %1$d</string>
+    <string name="guest_signal_crashed">O emulador travou (sinal %1$d). Toque em “Compartilhar diagnóstico” para enviar o relatório técnico.</string>
     <string name="guest_exited">Emulação encerrada (código %1$d)</string>
     <string name="not_running">Não está em execução</string>
     <string name="runtime_bad">Runtime ausente ou corrompido</string>

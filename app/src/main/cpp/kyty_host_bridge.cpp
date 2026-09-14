@@ -332,6 +332,64 @@ std::string HostReadLogTail() {
 }
 
 /* -------------------------------------------------------------------------- */
+/* log drain: pipe -> emulator.log + logcat mirror                            */
+/* -------------------------------------------------------------------------- */
+
+/* box64 / guest stdout+stderr are redirected (dup2) into a pipe; this thread
+ * drains it into emulator.log (for the in-app UI tail and the crash
+ * black-box) AND mirrors every line into logcat with tag "KytyBox64" so a
+ * plain `adb logcat` / bug-report capture carries the full box64 diagnostic
+ * trace (library loads, symbol warnings, SIGSEGV report) without adb access
+ * to the app's private files. */
+static void HostLogMirrorLine(const char *line, size_t len) {
+        /* logcat truncates very long lines; cap defensively */
+        char tmp[3500];
+        size_t n = len < sizeof(tmp) - 1 ? len : sizeof(tmp) - 1;
+        memcpy(tmp, line, n);
+        tmp[n] = '\0';
+        __android_log_print(ANDROID_LOG_INFO, "KytyBox64", "%s", tmp);
+}
+
+static void HostLogDrainThread(int fd, FILE *lf) {
+        char buf[4096];
+        std::string acc; /* partial-line accumulator for the logcat mirror */
+        for (;;) {
+                ssize_t n = read(fd, buf, sizeof(buf));
+                if (n < 0) {
+                        if (errno == EINTR) {
+                                continue;
+                        }
+                        break;
+                }
+                if (n == 0) {
+                        break; /* EOF: both write ends closed */
+                }
+                {
+                        HostState &s = Host();
+                        std::lock_guard<std::mutex> lock(s.log_mutex);
+                        fwrite(buf, 1, (size_t)n, lf);
+                        fflush(lf);
+                }
+                acc.append(buf, (size_t)n);
+                size_t nl;
+                while ((nl = acc.find('\n')) != std::string::npos) {
+                        if (nl > 0) {
+                                HostLogMirrorLine(acc.data(), nl);
+                        }
+                        acc.erase(0, nl + 1);
+                }
+                if (acc.size() > 8192) {
+                        /* pathological unterminated line: flush it */
+                        HostLogMirrorLine(acc.data(), acc.size());
+                        acc.clear();
+                }
+        }
+        if (!acc.empty()) {
+                HostLogMirrorLine(acc.data(), acc.size());
+        }
+}
+
+/* -------------------------------------------------------------------------- */
 /* exit notification                                                           */
 /* -------------------------------------------------------------------------- */
 
@@ -455,25 +513,53 @@ bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
                 return false;
         }
 
-        /* fresh log capture: redirect the process stdout/stderr to a file.
-         * The guest (emulator + box64) printf/LOGF output lands there; the UI
-         * tails the same file. */
+        /* fresh log capture: redirect the process stdout/stderr into a pipe
+         * drained by HostLogDrainThread, which persists to emulator.log (UI
+         * tail + crash black-box) and mirrors every line to logcat (tag
+         * "KytyBox64") so device-side bug reports carry the box64 trace. */
         {
                 std::lock_guard<std::mutex> llock(s.log_mutex);
                 if (s.log_file != nullptr) {
                         fclose(s.log_file);
+                        s.log_file = nullptr;
                 }
                 std::string log_path = s.files_root + "/logs/emulator.log";
                 remove(log_path.c_str());
-                FILE *out = freopen(log_path.c_str(), "wb", stdout);
-                if (out == nullptr) {
-                        ALOGE("freopen(stdout) failed: %s", strerror(errno));
+
+                int fds[2];
+                if (pipe(fds) != 0) {
+                        ALOGE("pipe() for log capture failed: %s", strerror(errno));
                         return false;
                 }
+                fflush(stdout);
+                fflush(stderr);
+                if (dup2(fds[1], STDOUT_FILENO) < 0 || dup2(fds[1], STDERR_FILENO) < 0) {
+                        ALOGE("dup2(log pipe) failed: %s", strerror(errno));
+                        close(fds[0]);
+                        close(fds[1]);
+                        return false;
+                }
+                close(fds[1]); /* fds 1 & 2 are now the only write ends */
                 setvbuf(stdout, nullptr, _IOLBF, 8192);
-                dup2(STDOUT_FILENO, STDERR_FILENO); /* stderr shares the log fd */
+
+                FILE *lf = fopen(log_path.c_str(), "wb");
+                if (lf == nullptr) {
+                        ALOGE("fopen(emulator.log) failed: %s", strerror(errno));
+                        close(fds[0]);
+                        return false;
+                }
+                s.log_write = lf;
+                if (!s.log_drain_started) {
+                        s.log_drain_started = true;
+                        s.log_drain_thread = std::thread(HostLogDrainThread, fds[0], lf);
+                        s.log_drain_thread.detach(); /* daemon: parks on read after session end */
+                }
+                /* separate read handle + offset so the UI tails flushed bytes */
                 s.log_file = fopen(log_path.c_str(), "rb");
                 s.log_offset = 0;
+                if (s.log_file == nullptr) {
+                        ALOGE("fopen(emulator.log, rb) failed: %s", strerror(errno));
+                }
         }
 
         /* working directory: the emulator mounts sandbox dirs relative to cwd.

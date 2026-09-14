@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 5f3990e..c3d6253 100644
+index 5f3990e5..aa32d806 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1345,6 +1345,28 @@ add_library(mainobj OBJECT ${OS_LINUX_SRC} ${ELFLOADER_SRC} ${WRAPPEDS} ${WRAPPE
@@ -31,9 +31,35 @@ index 5f3990e..c3d6253 100644
  if(NOT NOBOX64)
      add_executable(${BOX64})
      target_link_libraries(${BOX64} mainobj)
+diff --git a/src/box64context.c b/src/box64context.c
+index 468d371a..f8771d65 100644
+--- a/src/box64context.c
++++ b/src/box64context.c
+@@ -218,6 +218,21 @@ box64context_t *NewBox64Context(int argc)
+     // get handle to box64 itself
+     #ifndef STATICBUILD
+     context->box64lib = dlopen(NULL, RTLD_NOW|RTLD_GLOBAL);
++     /* Library mode: box64 runs as a dlopen()-ed shared object (Android
++      * app class-loader namespace, or any RTLD_LOCAL host). The NULL
++      * handle describes the main executable and cannot see box64's own
++      * symbols, so every dlsym(box64lib, "my_XXX") fails and wrapped
++      * varargs symbols (printf, pthread_create, fopen, exit, ...) get
++      * NULL PLT slots - the guest then dies on the first such call,
++      * jumping to a non-executable page. Fix: probe the handle for a
++      * known internal, and when it is invisible, open box64 by its own
++      * soname - in the caller's namespace this finds the already-loaded
++      * object, and dlsym on that handle sees its symbols. */
++     if(!context->box64lib || !dlsym(context->box64lib, "my_printf")) {
++         void* self = dlopen("libbox64.so", RTLD_NOW|RTLD_GLOBAL);
++         if(self && dlsym(self, "my_printf"))
++             context->box64lib = self;
++     }
+     #endif
+     context->dlprivate = NewDLPrivate();
+ 
 diff --git a/src/box64lib.c b/src/box64lib.c
 new file mode 100644
-index 0000000..3b09293
+index 00000000..3b092939
 --- /dev/null
 +++ b/src/box64lib.c
 @@ -0,0 +1,52 @@
@@ -89,35 +115,11 @@ index 0000000..3b09293
 +    box64lib_active = 0;
 +    return box64lib_exit_code;
 +}
-diff --git a/src/elfs/elfloader.c b/src/elfs/elfloader.c
-index 990e9b8..f3d7bf6 100644
---- a/src/box64context.c
-+++ b/src/box64context.c
-@@ -218,5 +218,20 @@ int NewBox64Context(int argc, const char** argv)
-     // get handle to box64 itself
-     #ifndef STATICBUILD
-     context->box64lib = dlopen(NULL, RTLD_NOW|RTLD_GLOBAL);
-+     /* Library mode: box64 runs as a dlopen()-ed shared object (Android
-+      * app class-loader namespace, or any RTLD_LOCAL host). The NULL
-+      * handle describes the main executable and cannot see box64's own
-+      * symbols, so every dlsym(box64lib, "my_XXX") fails and wrapped
-+      * varargs symbols (printf, pthread_create, fopen, exit, ...) get
-+      * NULL PLT slots - the guest then dies on the first such call,
-+      * jumping to a non-executable page. Fix: probe the handle for a
-+      * known internal, and when it is invisible, open box64 by its own
-+      * soname - in the caller's namespace this finds the already-loaded
-+      * object, and dlsym on that handle sees its symbols. */
-+     if(!context->box64lib || !dlsym(context->box64lib, "my_printf")) {
-+         void* self = dlopen("libbox64.so", RTLD_NOW|RTLD_GLOBAL);
-+         if(self && dlsym(self, "my_printf"))
-+             context->box64lib = self;
-+     }
-     #endif
-     context->dlprivate = NewDLPrivate();
+diff --git a/src/core.c b/src/core.c
+index 9190edf6..db96b278 100644
 --- a/src/core.c
 +++ b/src/core.c
-@@ -1468,16 +1468,27 @@
-         if (strcmp(box64_guest_name, p)) {
+@@ -1469,6 +1469,16 @@ int initialize(int argc, const char **argv, char** env, x64emu_t** emulator, elf
              ApplyEnvFileEntry(p);
          }
          // and now all change the argv (so libs libs mesa find the correct program names)
@@ -134,9 +136,7 @@ index 990e9b8..f3d7bf6 100644
          char* endp = (char*)argv[argc-1];
          while(*endp)
              ++endp;    // find last argv[] address
-         uintptr_t diff = prog - argv[0]; // this is the difference we need to compensate
-         for(p=(char*)prog; p<=endp; ++p)
-             *(p - diff) = *p;  // copy all element at argv[nextarg] to argv[0]
+@@ -1478,6 +1488,7 @@ int initialize(int argc, const char **argv, char** env, x64emu_t** emulator, elf
          memset(endp - diff, 0, diff); // fill reminder with NULL
          for(int i=nextarg; i<argc; ++i)
              argv[i] -= diff;    // adjust strings
@@ -144,6 +144,8 @@ index 990e9b8..f3d7bf6 100644
          my_context->orig_argc = argc;
          my_context->orig_argv = (char**)argv;
      }
+diff --git a/src/elfs/elfloader.c b/src/elfs/elfloader.c
+index 990e9b8c..f3d7bf62 100644
 --- a/src/elfs/elfloader.c
 +++ b/src/elfs/elfloader.c
 @@ -48,6 +48,13 @@
@@ -161,7 +163,7 @@ index 990e9b8..f3d7bf6 100644
  #ifndef STATICBUILD
  void startMallocHook();
 diff --git a/src/elfs/elfparser.c b/src/elfs/elfparser.c
-index 2d63cf4..4751253 100644
+index 2d63cf4d..47512536 100644
 --- a/src/elfs/elfparser.c
 +++ b/src/elfs/elfparser.c
 @@ -10,6 +10,15 @@
@@ -181,7 +183,7 @@ index 2d63cf4..4751253 100644
  #ifndef PN_XNUM 
  #define PN_XNUM (0xffff)
 diff --git a/src/emu/x64int3.c b/src/emu/x64int3.c
-index c72aa71..4fc0452 100644
+index c72aa714..4fc04526 100644
 --- a/src/emu/x64int3.c
 +++ b/src/emu/x64int3.c
 @@ -35,6 +35,15 @@
@@ -201,7 +203,7 @@ index c72aa71..4fc0452 100644
  typedef int32_t (*iFpppp_t)(void*, void*, void*, void*);
  
 diff --git a/src/emu/x86int3.c b/src/emu/x86int3.c
-index 8bd32a7..807af87 100755
+index 8bd32a73..807af87d 100755
 --- a/src/emu/x86int3.c
 +++ b/src/emu/x86int3.c
 @@ -32,6 +32,15 @@
@@ -220,83 +222,8 @@ index 8bd32a7..807af87 100755
  
  typedef int32_t (*iFpppp_t)(void*, void*, void*, void*);
  
-diff --git a/src/wrapped/generated/functions_list.txt b/src/wrapped/generated/functions_list.txt
-index a38dc33..7d26f07 100644
---- a/src/wrapped/generated/functions_list.txt
-+++ b/src/wrapped/generated/functions_list.txt
-@@ -4254,6 +4254,7 @@
- #() iFEpuvvppp -> iFEpuppp
- wrappedalure:
- wrappedalut:
-+wrappedandroidshmem:
- wrappedanl:
- wrappedatk:
- - vFp:
-diff --git a/src/wrapped/wrappedlibc.c b/src/wrapped/wrappedlibc.c
-index f8ef724..c2b0a4b 100644
---- a/src/wrapped/wrappedlibc.c
-+++ b/src/wrapped/wrappedlibc.c
-@@ -5087,16 +5087,27 @@ static void* timed_exit_thread(void* a)
-     _exit(box64_exit_code); // force exit, something is wrong
- }
- 
-+extern int box64lib_active;
-+
- void startTimedExit()
- {
-     static int started = 0;
-     if(started)
-         return;
-+    #ifdef BOX64LIB
-+    if(box64lib_active)
-+        return; /* library mode: never _exit() the host process */
-+    #endif
-     started = 1;
-     pthread_t exit_thread;
-     pthread_create(&exit_thread, NULL, timed_exit_thread, NULL);
- }
- 
-+extern jmp_buf box64lib_exit_jmp;
-+extern int box64lib_active;
-+extern int box64lib_exit_code;
-+extern pthread_t box64lib_thread;
-+
- EXPORT void my_exit(x64emu_t* emu, int code)
- {
-     if(emu->flags.quitonexit) {
-@@ -5107,6 +5118,14 @@ EXPORT void my_exit(x64emu_t* emu, int code)
-     }
-     emu->quit = 1;
-     box64_exit_code = code;
-+    #ifdef BOX64LIB
-+    /* library mode: return to the host instead of killing the process.
-+     * Only safe when called from the thread that entered box64_main(). */
-+    if(box64lib_active && pthread_equal(pthread_self(), box64lib_thread)) {
-+        box64lib_exit_code = code;
-+        longjmp(box64lib_exit_jmp, 1);
-+    }
-+    #endif
-     endBox64();
-     startTimedExit();
-     exit(code);
-diff --git a/src/wrapped/wrappedvulkan.c b/src/wrapped/wrappedvulkan.c
-index adf0b93..40822cd 100644
---- a/src/wrapped/wrappedvulkan.c
-+++ b/src/wrapped/wrappedvulkan.c
-@@ -21,7 +21,11 @@
- 
- //extern char* libvulkan;
- 
-+#ifdef __ANDROID__
-+const char* vulkanName = "libvulkan.so";
-+#else
- const char* vulkanName = "libvulkan.so.1";
-+#endif
- #define LIBNAME vulkan
- 
- typedef void(*vFpUp_t)      (void*, uint64_t, void*);
 diff --git a/src/librarian/library.c b/src/librarian/library.c
-index 09adb74..43b8475 100644
+index 09adb74a..c8985563 100644
 --- a/src/librarian/library.c
 +++ b/src/librarian/library.c
 @@ -12,6 +12,9 @@
@@ -321,7 +248,9 @@ index 09adb74..43b8475 100644
  
  char* Path2Name(const char* path)
  {
-@@ -261,9 +269,30 @@
+@@ -259,11 +267,32 @@ int DummyLib_GetLocal(library_t* lib, const char* name, uintptr_t *offs, uintptr
+     return 0;
+ }
  
 +#if defined(ANDROID)
 +/* bionic guests record DT_NEEDED without glibc's version suffix
@@ -389,7 +318,7 @@ index 09adb74..43b8475 100644
  static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uintptr_t *addr, uintptr_t *size, int* weak)
  {
      void* symbol;
-@@ -839,6 +868,10 @@ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uint
+@@ -839,6 +897,10 @@ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uint
          symbol = dlsym(lib->w.lib, kh_key(lib->w.datamap, k));
          if(!symbol)
              symbol = GetNativeSymbolUnversioned(lib->w.lib, kh_key(lib->w.datamap, k));
@@ -400,8 +329,83 @@ index 09adb74..43b8475 100644
          #endif
          if(symbol) {
              // found!
+diff --git a/src/libtools/signals.c b/src/libtools/signals.c
+index 2c2ab65a..fe91615a 100644
+--- a/src/libtools/signals.c
++++ b/src/libtools/signals.c
+@@ -28,6 +28,25 @@
+ #include "signals.h"
+ #include "box64stack.h"
+ #include "box64cpu.h"
++#ifdef BOX64LIB
++/* Library mode (Android host app): an unhandled guest signal must not kill
++ * the whole host process - the app would just "close" with no diagnostics.
++ * Instead, unwind back to box64_main()'s setjmp frame (same bridge my_exit
++ * uses) and report the signal as exit code 128+N. Only safe from the very
++ * thread that entered box64_main(). */
++#define BOX64LIB_RECOVER(host_sig) do { \
++    extern jmp_buf box64lib_exit_jmp; \
++    extern int box64lib_active; \
++    extern int box64lib_exit_code; \
++    extern pthread_t box64lib_thread; \
++    if (box64lib_active && pthread_equal(pthread_self(), box64lib_thread)) { \
++        printf_log(LOG_NONE, "Library mode: guest died with unhandled signal %d (exit %d) - recovering to host\n", (host_sig), 128 + (host_sig)); \
++        fflush(NULL); \
++        box64lib_exit_code = 128 + (host_sig); \
++        longjmp(box64lib_exit_jmp, 2); \
++    } \
++} while (0)
++#endif
+ #include "callback.h"
+ #include "elfloader.h"
+ #include "threads.h"
+@@ -89,6 +108,9 @@ uint64_t RunFunctionHandler(x64emu_t* emu, int* exit, int dynarec, x64_ucontext_
+         printf_log(LOG_NONE, "%04d|Warning, calling Signal %d function handler %s\n", GetTID(), sig, fnc?"SIG_IGN":"SIG_DFL");
+         if(fnc==0) {
+             printf_log(LOG_NONE, "Unhandled signal caught, dying with the signal\n");
++            #ifdef BOX64LIB
++            BOX64LIB_RECOVER(sig);
++            #endif
+             // restore the default handler for this signal, unblock it and re-raise it, 
+             // so the process dies with the expected signal (e.g. SIGSEGV) instead of aborting with SIGABRT.
+             struct sigaction sa;
+@@ -363,6 +385,9 @@ int my_sigactionhandler_oldcode_64(x64emu_t* emu, int32_t sig, int simple, sigin
+         }
+         printf_log(LOG_NONE, "%04d|Warning, calling Signal %d function handler SIG_DFL\n", GetTID(), sig);
+         printf_log(LOG_NONE, "Unhandled signal caught, dying with the signal\n");
++        #ifdef BOX64LIB
++        BOX64LIB_RECOVER(host_sig);
++        #endif
+         struct sigaction sa;
+         memset(&sa, 0, sizeof(sa));
+         sa.sa_handler = SIG_DFL;
+@@ -1370,6 +1395,12 @@ dynarec_log(/*LOG_DEBUG*/LOG_INFO, "%04d|Repeated SIGSEGV with Access error on %
+         return;
+     }
+     // no handler
++    #ifdef BOX64LIB
++    /* Library mode: no guest handler and a fatal signal - recover to the
++     * host instead of resetting to SIG_DFL and letting the re-fault kill
++     * the whole app process. */
++    BOX64LIB_RECOVER(signal_from_x64(sig));
++    #endif
+     // set default and that's it, instruction will restart and default segfault handler will be called...
+     if(my_context->signals[sig]!=1 || sig==X64_SIGSEGV || sig==X64_SIGILL || sig==X64_SIGFPE || sig==X64_SIGABRT) {
+         signal(signal_from_x64(sig), (void*)my_context->signals[sig]);
+diff --git a/src/wrapped/generated/functions_list.txt b/src/wrapped/generated/functions_list.txt
+index a38dc33e..7d26f075 100644
+--- a/src/wrapped/generated/functions_list.txt
++++ b/src/wrapped/generated/functions_list.txt
+@@ -4254,6 +4254,7 @@
+ #() iFEpuvvppp -> iFEpuppp
+ wrappedalure:
+ wrappedalut:
++wrappedandroidshmem:
+ wrappedanl:
+ wrappedatk:
+ - vFp:
 diff --git a/src/wrapped/wrappedldlinux_private.h b/src/wrapped/wrappedldlinux_private.h
-index a180d2d..00e6b93 100644
+index a180d2d2..00e6b936 100644
 --- a/src/wrapped/wrappedldlinux_private.h
 +++ b/src/wrapped/wrappedldlinux_private.h
 @@ -24,8 +24,12 @@ DATAM(__libc_stack_end, sizeof(void*))
@@ -419,3 +423,66 @@ index a180d2d..00e6b93 100644
  #endif
  #ifndef PPC64LE
  DATA(__stack_chk_guard, sizeof(void*))
+diff --git a/src/wrapped/wrappedlibc.c b/src/wrapped/wrappedlibc.c
+index f8ef7247..c2b0a4bf 100644
+--- a/src/wrapped/wrappedlibc.c
++++ b/src/wrapped/wrappedlibc.c
+@@ -5087,16 +5087,27 @@ static void* timed_exit_thread(void* a)
+     _exit(box64_exit_code); // force exit, something is wrong
+ }
+ 
++extern int box64lib_active;
++
+ void startTimedExit()
+ {
+     static int started = 0;
+     if(started)
+         return;
++    #ifdef BOX64LIB
++    if(box64lib_active)
++        return; /* library mode: never _exit() the host process */
++    #endif
+     started = 1;
+     pthread_t exit_thread;
+     pthread_create(&exit_thread, NULL, timed_exit_thread, NULL);
+ }
+ 
++extern jmp_buf box64lib_exit_jmp;
++extern int box64lib_active;
++extern int box64lib_exit_code;
++extern pthread_t box64lib_thread;
++
+ EXPORT void my_exit(x64emu_t* emu, int code)
+ {
+     if(emu->flags.quitonexit) {
+@@ -5107,6 +5118,14 @@ EXPORT void my_exit(x64emu_t* emu, int code)
+     }
+     emu->quit = 1;
+     box64_exit_code = code;
++    #ifdef BOX64LIB
++    /* library mode: return to the host instead of killing the process.
++     * Only safe when called from the thread that entered box64_main(). */
++    if(box64lib_active && pthread_equal(pthread_self(), box64lib_thread)) {
++        box64lib_exit_code = code;
++        longjmp(box64lib_exit_jmp, 1);
++    }
++    #endif
+     endBox64();
+     startTimedExit();
+     exit(code);
+diff --git a/src/wrapped/wrappedvulkan.c b/src/wrapped/wrappedvulkan.c
+index adf0b938..40822cdd 100644
+--- a/src/wrapped/wrappedvulkan.c
++++ b/src/wrapped/wrappedvulkan.c
+@@ -21,7 +21,11 @@
+ 
+ //extern char* libvulkan;
+ 
++#ifdef __ANDROID__
++const char* vulkanName = "libvulkan.so";
++#else
+ const char* vulkanName = "libvulkan.so.1";
++#endif
+ #define LIBNAME vulkan
+ 
+ typedef void(*vFpUp_t)      (void*, uint64_t, void*);

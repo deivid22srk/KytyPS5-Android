@@ -336,8 +336,11 @@ private fun SessionEndOverlay(code: Int, onBack: () -> Unit, onRestart: () -> Un
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (code == 0) stringResource(R.string.guest_exited, code)
-                else stringResource(R.string.guest_crashed, code),
+                when {
+                    code == 0 -> stringResource(R.string.guest_exited, code)
+                    code >= 128 -> stringResource(R.string.guest_signal_crashed, code - 128)
+                    else -> stringResource(R.string.guest_crashed, code)
+                },
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White,
             )
