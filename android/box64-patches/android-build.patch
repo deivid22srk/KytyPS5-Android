@@ -2817,6 +2817,19 @@ index a180d2d2..00e6b936 100644
  #endif
  #ifndef PPC64LE
  DATA(__stack_chk_guard, sizeof(void*))
+diff --git a/src/wrapped/wrappedlib_init.h b/src/wrapped/wrappedlib_init.h
+index b07d4d26..8003e941 100644
+--- a/src/wrapped/wrappedlib_init.h
++++ b/src/wrapped/wrappedlib_init.h
+@@ -173,7 +173,7 @@ int FUNC(_init)(library_t* lib, box64context_t* box64)
+ #ifdef PRE_INIT
+     PRE_INIT
+ #endif
+-    {
++    if(!lib->w.lib) {
+ #ifndef STATICBUILD
+         lib->w.lib = dlopen(MAPNAME(Name), RTLD_LAZY | RTLD_GLOBAL);
+         if(!lib->w.lib) {
 diff --git a/src/wrapped/wrappedlibc.c b/src/wrapped/wrappedlibc.c
 index f8ef7247..920046cd 100644
 --- a/src/wrapped/wrappedlibc.c
@@ -2979,7 +2992,7 @@ index 566ce8b6..531d49fc 100644
  #ifdef NOALIGN
  GO(pthread_condattr_destroy, iFp)
 diff --git a/src/wrapped/wrappedvulkan.c b/src/wrapped/wrappedvulkan.c
-index adf0b938..40822cdd 100644
+index adf0b938..0de576b0 100644
 --- a/src/wrapped/wrappedvulkan.c
 +++ b/src/wrapped/wrappedvulkan.c
 @@ -21,7 +21,11 @@
@@ -2994,3 +3007,31 @@ index adf0b938..40822cdd 100644
  #define LIBNAME vulkan
  
  typedef void(*vFpUp_t)      (void*, uint64_t, void*);
+@@ -430,9 +434,24 @@ static void* find_DebugUtilsMessengerCallback_Fct(void* fct)
+ 
+ //#define PRE_INIT if(libGL) {lib->w.lib = dlopen(libGL, RTLD_LAZY | RTLD_GLOBAL); lib->path = box_strdup(libGL);} else
+ 
+-#define PRE_INIT           \
+-    if(BOX64ENV(novulkan)) \
+-        return -1;
++/* Host-app custom Vulkan loader handle (adrenotools custom driver, e.g.
++ * a user-selected Turnip build). When the Android host calls
++ * box64_set_vulkan_handle() before the guest first dlopens libvulkan, the
++ * wrapped libvulkan binds to that handle instead of dlopening the system
++ * loader, so the whole guest Vulkan stack runs on the selected driver. */
++void* g_host_vulkan_handle = NULL;
++EXPORT void box64_set_vulkan_handle(void* handle)
++{
++    g_host_vulkan_handle = handle;
++}
++
++#define PRE_INIT                       \
++    if(BOX64ENV(novulkan))             \
++        return -1;                     \
++    if(g_host_vulkan_handle) {         \
++        lib->w.lib = g_host_vulkan_handle; \
++        lib->path = box_strdup("[host vulkan driver]"); \
++    }
+ 
+ #define CUSTOM_INIT \
+     lib->w.priv = dlsym(lib->w.lib, "vkGetInstanceProcAddr"); \

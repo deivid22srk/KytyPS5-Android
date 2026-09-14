@@ -1,6 +1,7 @@
 package dev.kytyps5.android.settings
 
 import android.content.Context
+import dev.kytyps5.android.emu.VulkanDriverManager
 import org.json.JSONObject
 import java.io.File
 
@@ -32,6 +33,8 @@ data class EmuSettings(
     val box64BigBlock: Boolean = true,
     val box64StrongMem: Int = 0, // 0 | 1 | 2
     val box64Log: Int = 0, // 0..5
+    // graphics -> adrenotools driver selection (consumed by EmulatorSession)
+    val vulkanDriverId: String = VulkanDriverManager.SYSTEM_DRIVER_ID,
 ) {
     fun toEmulatorArgs(gameDir: String, paramJson: String): List<String> {
         val args = mutableListOf(
@@ -96,6 +99,7 @@ data class EmuSettings(
         o.put("box64BigBlock", box64BigBlock)
         o.put("box64StrongMem", box64StrongMem)
         o.put("box64Log", box64Log)
+        o.put("vulkanDriverId", vulkanDriverId)
         return o.toString(2)
     }
 
@@ -137,6 +141,7 @@ data class EmuSettings(
             box64BigBlock = o.optBoolean("box64BigBlock", true),
             box64StrongMem = o.optInt("box64StrongMem", 0),
             box64Log = o.optInt("box64Log", 0),
+            vulkanDriverId = o.optString("vulkanDriverId", VulkanDriverManager.SYSTEM_DRIVER_ID),
         )
     }
 }

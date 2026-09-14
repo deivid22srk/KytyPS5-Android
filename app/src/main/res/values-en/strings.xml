@@ -79,4 +79,15 @@
     <string name="share_diagnostics">Share diagnostics</string>
     <string name="settings_diagnostics">Diagnostics</string>
     <string name="diagnostics_desc">Sends the emulator log (emulator.log) with the box64 crash report, device info and current settings — useful to report crashes without adb.</string>
+    <string name="driver_section">Vulkan driver (Turnip)</string>
+    <string name="driver_desc">Rootless Vulkan driver loading via adrenotools: pick a Turnip (Mesa) ZIP to use instead of the system driver.</string>
+    <string name="driver_system">System driver (default)</string>
+    <string name="driver_import">Import driver (.zip)</string>
+    <string name="driver_import_ok">Driver installed: %s</string>
+    <string name="driver_import_invalid">Invalid ZIP: %s</string>
+    <string name="driver_import_failed">Import failed: %s</string>
+    <string name="driver_delete">Delete</string>
+    <string name="driver_delete_confirm_title">Delete driver?</string>
+    <string name="driver_delete_confirm">Delete driver \"%s\" from internal storage?</string>
+    <string name="driver_note">The driver is applied when the next session starts. If a game already ran in this process, restart the app before switching drivers. If loading fails, the session falls back to the system driver.</string>
 </resources>

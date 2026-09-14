@@ -71,6 +71,13 @@ object NativeBridge {
      *  first call — run it off the main thread. */
     fun box64Available(): Boolean = nativeBox64Available()
 
+    /** Installs a custom Vulkan driver (adrenotools) for this process —
+     *  the driver's loader handle is handed to box64 so the guest Vulkan
+     *  stack runs on it. Must be called before start(); returns false when
+     *  the driver cannot be loaded (the session then uses the system one). */
+    fun installVulkanDriver(driverDir: String, soname: String): Boolean =
+        nativeInstallVulkanDriver(driverDir, soname)
+
     // ---- raw JNI ----
     private external fun nativeSetCallback(callback: Any)
     private external fun nativeInit(filesRoot: String, nativeLibDir: String): Boolean
@@ -97,4 +104,5 @@ object NativeBridge {
     private external fun nativeEnumerateVulkanDevices(): String
     private external fun nativeIsGuestReady(): Boolean
     private external fun nativeBox64Available(): Boolean
+    private external fun nativeInstallVulkanDriver(driverDir: String, soname: String): Boolean
 }

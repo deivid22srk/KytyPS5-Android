@@ -76,9 +76,9 @@ class EmulatorSession(private val context: Context) {
     private var box64Loadable: Boolean? = null
 
     /** Real box64 probe: the host side dlopen()s libbox64.so — resolved
-     *  through the class-loader namespace (APK-embedded, since
-     *  extractNativeLibs is off), with the extracted file as fallback.
-     *  Heavy on first call: IO thread only. */
+     *  through the class-loader namespace (extracted to nativeLibraryDir),
+     *  with the extracted file as fallback. Heavy on first call: IO thread
+     *  only. */
     fun probeBox64(): Boolean {
         box64Loadable?.let { return it }
         box64Loadable = try { NativeBridge.box64Available() } catch (e: UnsatisfiedLinkError) { false }
@@ -145,6 +145,30 @@ class EmulatorSession(private val context: Context) {
         if (sessionUsed) {
             // box64 library mode is single-session per process by design
             return false
+        }
+
+        // custom Vulkan driver (adrenotools): installed before the session
+        // starts, so the guest's first libvulkan dlopen binds to it. On any
+        // failure the session proceeds with the system driver (honest toast,
+        // never a silent dead end).
+        if (settings.vulkanDriverId != VulkanDriverManager.SYSTEM_DRIVER_ID) {
+            val driver = VulkanDriverManager.get(context, settings.vulkanDriverId)
+            if (driver == null) {
+                _toast.value =
+                    "Driver Vulkan '${settings.vulkanDriverId}' não encontrado — usando o driver do sistema"
+            } else {
+                val ok = try {
+                    NativeBridge.installVulkanDriver(
+                        VulkanDriverManager.driverDir(context, driver.id).absolutePath,
+                        driver.soname)
+                } catch (e: UnsatisfiedLinkError) {
+                    false
+                }
+                if (!ok) {
+                    _toast.value =
+                        "Falha ao carregar o driver '${driver.name}' — usando o driver do sistema"
+                }
+            }
         }
 
         val emuArgs = settings.toEmulatorArgs(game.installDir.absolutePath, "")

@@ -55,6 +55,12 @@ struct HostState {
         std::atomic<bool> emu_thread_running{false};
         bool emu_thread_started = false;
 
+        /* custom Vulkan driver (adrenotools): loader handle handed to box64
+         * before the guest's first libvulkan dlopen; installing a second one
+         * in the same process is not supported (namespaces are process-wide) */
+        void *vulkan_driver_handle = nullptr;
+        std::string vulkan_driver_id;
+
         /* session */
         std::atomic<bool> running{false};
         std::atomic<int> exit_code{-1};
@@ -133,6 +139,16 @@ std::string HostReadLogTail(); /* thread-safe tail of the guest log file */
 void HostSetSurface(ANativeWindow *window, uint32_t w, uint32_t h);
 void HostClearSurface();
 bool HostBox64Available(); /* real dlopen probe of libbox64.so (cached) */
+
+/* Installs a custom Vulkan driver (e.g. a user-imported Turnip build) via
+ * adrenotools: loads the system Vulkan loader into an isolated linker
+ * namespace with hooks that substitute the ICD with the driver found at
+ * driver_dir + driver_soname, then hands the loader handle to libbox64 so
+ * the whole guest Vulkan stack runs on that driver. Must be called before
+ * HostStart. Returns false (and the session falls back to the system
+ * driver) when the driver cannot be loaded. */
+bool HostInstallVulkanDriver(const std::string &driver_dir,
+                             const std::string &driver_soname);
 
 } // namespace KytyHost
 

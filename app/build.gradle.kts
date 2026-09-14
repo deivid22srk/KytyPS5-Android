@@ -13,8 +13,8 @@ android {
         applicationId = "dev.kytyps5.android"
         minSdk = 28 // box64 uses pthread_attr_setinheritsched & mutexattr_setprotocol (bionic API 28+)
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -53,7 +53,11 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            // Required by adrenotools: its hook libraries (libmain_hook.so,
+            // libhook_impl.so, libfile_redirect_hook.so, libgsl_alloc_hook.so)
+            // are dlopen()ed from nativeLibraryDir inside an isolated linker
+            // namespace, so the .so files must be extracted from the APK.
+            useLegacyPackaging = true
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

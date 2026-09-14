@@ -13,12 +13,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Delete
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +52,8 @@ import dev.kytyps5.android.MainActivity
 import dev.kytyps5.android.R
 import dev.kytyps5.android.Screen
 import dev.kytyps5.android.emu.NativeBridge
+import dev.kytyps5.android.emu.VulkanDriver
+import dev.kytyps5.android.emu.VulkanDriverManager
 import dev.kytyps5.android.settings.EmuSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -69,6 +76,39 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
     data class VulkanDevice(val index: Int, val name: String, val api: String)
     var devices by remember { mutableStateOf(listOf<VulkanDevice>()) }
     var vulkanWarning by remember { mutableStateOf<String?>(null) }
+
+    // custom Vulkan drivers (adrenotools): real imports through SAF
+    var drivers by remember { mutableStateOf(listOf<VulkanDriver>()) }
+    var importingDriver by remember { mutableStateOf(false) }
+    var confirmDeleteDriver by remember { mutableStateOf<VulkanDriver?>(null) }
+
+    LaunchedEffect(Unit) {
+        drivers = VulkanDriverManager.list(activity)
+    }
+
+    val zipLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                importingDriver = true
+                val result = withContext(Dispatchers.IO) {
+                    VulkanDriverManager.importFromZip(activity, uri)
+                }
+                importingDriver = false
+                drivers = VulkanDriverManager.list(activity)
+                val msg = when (result) {
+                    is VulkanDriverManager.ImportResult.Ok ->
+                        activity.getString(R.string.driver_import_ok, result.driver.name)
+                    is VulkanDriverManager.ImportResult.Invalid ->
+                        activity.getString(R.string.driver_import_invalid, result.reason)
+                    is VulkanDriverManager.ImportResult.Failed ->
+                        activity.getString(R.string.driver_import_failed, result.reason)
+                }
+                snackbar.showSnackbar(msg)
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         try {
@@ -165,6 +205,67 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                     )
                 }
             }
+
+            SectionTitle(stringResource(R.string.driver_section))
+            Text(
+                stringResource(R.string.driver_desc),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                FilterChip(
+                    selected = s.vulkanDriverId == VulkanDriverManager.SYSTEM_DRIVER_ID,
+                    onClick = {
+                        s = s.copy(vulkanDriverId = VulkanDriverManager.SYSTEM_DRIVER_ID)
+                    },
+                    label = { Text(stringResource(R.string.driver_system)) },
+                )
+                drivers.forEach { d ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        FilterChip(
+                            selected = s.vulkanDriverId == d.id,
+                            onClick = { s = s.copy(vulkanDriverId = d.id) },
+                            label = {
+                                Text(
+                                    "${d.name}" +
+                                        (if (d.version.isNotEmpty()) " (${d.version})" else "")
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { confirmDeleteDriver = d }) {
+                            Icon(Icons.Filled.Delete,
+                                contentDescription = stringResource(R.string.driver_delete))
+                        }
+                    }
+                }
+            }
+            if (importingDriver) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            OutlinedButton(
+                onClick = {
+                    zipLauncher.launch(arrayOf(
+                        "application/zip",
+                        "application/x-zip-compressed",
+                        "application/octet-stream",
+                    ))
+                },
+                enabled = !importingDriver,
+            ) {
+                Icon(Icons.Filled.Archive, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.driver_import))
+            }
+            Text(
+                stringResource(R.string.driver_note),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             ToggleRow(stringResource(R.string.vulkan_validation), s.vulkanValidation) {
                 s = s.copy(vulkanValidation = it)
@@ -306,6 +407,31 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
     // persist immediately on every change (real persistence, JSON in filesDir)
     LaunchedEffect(s) {
         activity.saveSettings(s)
+    }
+
+    confirmDeleteDriver?.let { victim ->
+        AlertDialog(
+            onDismissRequest = { confirmDeleteDriver = null },
+            title = { Text(stringResource(R.string.driver_delete_confirm_title)) },
+            text = { Text(stringResource(R.string.driver_delete_confirm, victim.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val deleted = VulkanDriverManager.delete(activity, victim.id)
+                    if (deleted && s.vulkanDriverId == victim.id) {
+                        s = s.copy(vulkanDriverId = VulkanDriverManager.SYSTEM_DRIVER_ID)
+                    }
+                    drivers = VulkanDriverManager.list(activity)
+                    confirmDeleteDriver = null
+                }) {
+                    Text(stringResource(R.string.driver_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteDriver = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 }
 

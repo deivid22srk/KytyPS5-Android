@@ -21,6 +21,17 @@ target_include_directories(kytyhost PRIVATE
 	"${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
+# --- adrenotools: rootless custom Vulkan driver loading (e.g. Turnip) ---
+# Builds libadrenotools.a (linked into kytyhost) plus the hook shared
+# libraries (libmain_hook.so, libhook_impl.so, libfile_redirect_hook.so,
+# libgsl_alloc_hook.so) that must be packaged inside the APK - they are
+# dlopen()ed from nativeLibraryDir inside an isolated linker namespace.
+# Vendored from https://github.com/bylaws/libadrenotools (BSD-2-Clause),
+# linkernsbypass from https://github.com/bylaws/liblinkernsbypass.
+set(CMAKE_ANDROID_ARCH_ABI arm64-v8a) # defensive: vendored CMake checks it
+set(GEN_INSTALL_TARGET OFF)
+add_subdirectory(adrenotools)
+
 find_library(log-lib log)
 find_library(android-lib android)
 find_library(aaudio-lib aaudio)
@@ -31,4 +42,5 @@ target_link_libraries(kytyhost
 	${android-lib}
 	${aaudio-lib}
 	${vulkan-lib}
+	adrenotools
 )

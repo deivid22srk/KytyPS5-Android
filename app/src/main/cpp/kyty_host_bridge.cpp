@@ -5,6 +5,8 @@
 
 #include "kyty_host.h"
 
+#include <adrenotools/driver.h>
+
 #include <android/log.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -459,11 +461,10 @@ static bool HostLoadBox64(HostState &s) {
         if (s.box64_main != nullptr) { /* re-check under the lock */
                 return true;
         }
-        /* With useLegacyPackaging=false the library is NOT extracted to
-         * nativeLibraryDir — it lives inside base.apk and is reachable
-         * through the app class-loader namespace by its bare name (the
-         * same mechanism that loaded libkytyhost.so). Try the bare name
-         * first, then the extracted path for devices that do extract. */
+        /* libbox64.so is packaged with useLegacyPackaging=true (the
+         * adrenotools hooks require extracted .so files), so it exists on
+         * disk under nativeLibraryDir and is reachable both by bare name
+         * through the class-loader namespace and by absolute path. */
         s.box64_lib = dlopen("libbox64.so", RTLD_NOW | RTLD_LOCAL);
         const char *err = s.box64_lib != nullptr ? nullptr : dlerror();
         if (s.box64_lib != nullptr) {
@@ -492,6 +493,77 @@ static bool HostLoadBox64(HostState &s) {
 bool HostBox64Available() {
         /* real probe: dlopen + dlsym (cached after the first success) */
         return HostLoadBox64(Host());
+}
+
+bool HostInstallVulkanDriver(const std::string &driver_dir_in,
+                             const std::string &driver_soname) {
+        HostState &s = Host();
+        if (!s.initialized) {
+                ALOGE("driver install: host not initialized");
+                return false;
+        }
+        if (driver_soname.empty() || driver_soname.find('/') != std::string::npos) {
+                ALOGE("driver install: invalid soname '%s'", driver_soname.c_str());
+                return false;
+        }
+        if (s.vulkan_driver_handle != nullptr) {
+                /* adrenotools linker namespaces and the soname-patched loader
+                 * copy are process-wide; a second install in the same process
+                 * is not supported (single-session process anyway). */
+                ALOGI("driver install: a driver is already installed in this process");
+                return true;
+        }
+        if (!HostLoadBox64(s)) {
+                ALOGE("driver install: libbox64.so not loadable");
+                return false;
+        }
+
+        /* adrenotools concatenates customDriverDir + customDriverName, so the
+         * directory MUST end with a separator */
+        std::string driver_dir = driver_dir_in;
+        if (!driver_dir.empty() && driver_dir.back() != '/') {
+                driver_dir += '/';
+        }
+
+        /* the driver's file operations (shader cache, config) are redirected
+         * into its own directory so a user driver never writes where the
+         * system driver would */
+        std::string redirect_dir = driver_dir + "redirect";
+        mkdir(driver_dir.c_str(), 0700);
+        mkdir(redirect_dir.c_str(), 0700);
+
+        /* tmpLibDir holds the soname-patched loader copy on API 28 devices
+         * without memfd; on 29+ adrenotools ignores it and uses memfd */
+        std::string tmp_dir = s.files_root + "/tmp";
+        mkdir(tmp_dir.c_str(), 0700);
+
+        /* RTLD_NOW mirrors box64's own wrapped-vulkan usage; hooks live in
+         * nativeLibraryDir and are dlopen()ed inside the isolated namespace */
+        void *handle = adrenotools_open_libvulkan(
+                RTLD_NOW,
+                ADRENOTOOLS_DRIVER_CUSTOM | ADRENOTOOLS_DRIVER_FILE_REDIRECT,
+                tmp_dir.c_str(), s.native_lib_dir.c_str(),
+                driver_dir.c_str(), driver_soname.c_str(),
+                redirect_dir.c_str(), nullptr);
+        if (handle == nullptr) {
+                ALOGE("adrenotools_open_libvulkan failed for %s%s "
+                      "(device below API 28 or driver files unusable)",
+                      driver_dir.c_str(), driver_soname.c_str());
+                return false;
+        }
+
+        auto set_handle =
+                (void (*)(void *))dlsym(s.box64_lib, "box64_set_vulkan_handle");
+        if (set_handle == nullptr) {
+                ALOGE("libbox64.so does not export box64_set_vulkan_handle "
+                      "(stale build?) - custom driver cannot be applied");
+                return false;
+        }
+        set_handle(handle);
+        s.vulkan_driver_handle = handle;
+        ALOGI("custom Vulkan driver installed via adrenotools: %s%s",
+              driver_dir.c_str(), driver_soname.c_str());
+        return true;
 }
 
 bool HostStart(const std::string &workdir, const std::vector<std::string> &args,

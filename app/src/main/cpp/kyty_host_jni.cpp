@@ -225,9 +225,20 @@ Java_dev_kytyps5_android_emu_NativeBridge_nativeIsGuestReady(JNIEnv * /*env*/, j
 
 JNIEXPORT jboolean JNICALL
 Java_dev_kytyps5_android_emu_NativeBridge_nativeBox64Available(JNIEnv * /*env*/, jclass /*cls*/) {
-        /* real probe: resolves libbox64.so through the class-loader
-         * namespace (APK-embedded when extractNativeLibs=false) */
+        /* real probe: resolves libbox64.so through the class-loader namespace
+         * (extracted to nativeLibraryDir by useLegacyPackaging=true) */
         return HostBox64Available() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_dev_kytyps5_android_emu_NativeBridge_nativeInstallVulkanDriver(JNIEnv *env,
+                                                                   jclass /*cls*/,
+                                                                   jstring driver_dir,
+                                                                   jstring driver_soname) {
+        return HostInstallVulkanDriver(JStringToStd(env, driver_dir),
+                                       JStringToStd(env, driver_soname))
+                   ? JNI_TRUE
+                   : JNI_FALSE;
 }
 
 } /* extern "C" */
