@@ -31,7 +31,11 @@ jobs:
           java-version: '21'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        # v3 (floating) broke 2026-09-14: Google removed the legacy 'tools' package that
+        # older action internals install, so `sdkmanager tools` exits 1 on the new
+        # cmdline-tools 16 runner images. v3.2.2 supports cmdline-tools 12/13/16 and no
+        # longer installs the removed package.
+        uses: android-actions/setup-android@v3.2.2
 
       - name: Install SDK packages and NDK
         run: |
