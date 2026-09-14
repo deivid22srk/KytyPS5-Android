@@ -3,6 +3,7 @@ package dev.kytyps5.android.emu
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import dev.kytyps5.android.R
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.File
@@ -82,15 +83,22 @@ object VulkanDriverManager {
         list(context).firstOrNull { it.id == id }
 
     fun delete(context: Context, id: String): Boolean {
-        if (!id.matches(Regex("[a-z0-9._-]+"))) {
+        if (!isValidId(id)) {
             return false
         }
-        val dir = driverDir(context, id)
-        if (!dir.isDirectory) {
+        val root = driversRoot(context)
+        val dir = File(root, id)
+        /* canonical-path guard: the id must address a DIRECT child of the
+         * drivers root (defends ".", ".." and any future sanitizer bug) */
+        if (dir.parentFile?.canonicalFile != root.canonicalFile || !dir.isDirectory) {
             return false
         }
         return dir.deleteRecursively()
     }
+
+    /** Direct-child id: non-empty, charset-restricted and not a dot-name. */
+    private fun isValidId(id: String): Boolean =
+        id.matches(Regex("[a-z0-9][a-z0-9._-]*")) && id != "." && id != ".." && !id.contains("../")
 
     /**
      * Imports a driver ZIP picked through SAF. Fully offline: streams the
@@ -103,8 +111,13 @@ object VulkanDriverManager {
         val staging = File(context.cacheDir, "driver-import-${System.currentTimeMillis()}")
 
         try {
+            // sweep leftovers from earlier interrupted imports (staging dirs
+            // and driver dirs whose metadata never got written)
+            cleanupInterruptedImports(context)
             staging.mkdirs()
             val extracted = mutableListOf<String>() // relative paths of files written
+            var totalUncompressed = 0L
+            val maxUncompressed = 1L * 1024 * 1024 * 1024 // 1 GiB sanity quota
 
             context.contentResolver.openInputStream(uri)?.use { raw ->
                 ZipInputStream(BufferedInputStream(raw, 128 * 1024)).use { zis ->
@@ -118,23 +131,27 @@ object VulkanDriverManager {
                         ) {
                             if (entry.isDirectory) {
                                 File(staging, clean).mkdirs()
-                            } else {
+                            } else if (entry.size in 1..maxUncompressed || entry.size == -1L) {
                                 val target = File(staging, clean)
                                 target.parentFile?.mkdirs()
                                 FileOutputStream(target).use { out ->
-                                    zis.copyTo(out, 128 * 1024)
+                                    totalUncompressed += zis.copyTo(out, 128 * 1024)
                                 }
                                 extracted.add(clean)
+                                if (totalUncompressed > maxUncompressed) {
+                                    return ImportResult.Invalid(
+                                        context.getString(R.string.driver_reason_too_big))
+                                }
                             }
                         }
                         zis.closeEntry()
                         entry = zis.nextEntry
                     }
                 }
-            } ?: return ImportResult.Failed("stream indisponível")
+            } ?: return ImportResult.Failed(context.getString(R.string.driver_reason_no_stream))
 
             if (extracted.isEmpty()) {
-                return ImportResult.Invalid("ZIP vazio ou ilegível")
+                return ImportResult.Invalid(context.getString(R.string.driver_reason_empty_zip))
             }
 
             // candidate main driver: ELF .so whose basename looks like a
@@ -160,7 +177,7 @@ object VulkanDriverManager {
 
             if (candidates.isEmpty()) {
                 return ImportResult.Invalid(
-                    "nenhuma biblioteca de driver Vulkan encontrada (procure um ZIP do Turnip)")
+                    context.getString(R.string.driver_reason_no_lib))
             }
 
             // pick the first candidate that is genuinely an arm64 shared object
@@ -173,7 +190,7 @@ object VulkanDriverManager {
             }
             if (main == null) {
                 return ImportResult.Invalid(
-                    "o driver no ZIP não é uma biblioteca arm64 válida")
+                    context.getString(R.string.driver_reason_not_arm64))
             }
             val mainFile = File(staging, main.relPath)
 
@@ -224,31 +241,76 @@ object VulkanDriverManager {
         }
     }
 
+    /** Removes stale staging dirs (cacheDir) and driver dirs without
+     *  metadata (filesDir) left behind by interrupted imports. */
+    private fun cleanupInterruptedImports(context: Context) {
+        try {
+            context.cacheDir.listFiles { f -> f.name.startsWith("driver-import-") }
+                ?.forEach { it.deleteRecursively() }
+            driversRoot(context).listFiles { f -> f.isDirectory }
+                ?.filter { !File(it, META_FILE).exists() }
+                ?.forEach { it.deleteRecursively() }
+        } catch (e: Exception) {
+            // best-effort cleanup
+        }
+    }
+
     /**
      * Moves every extracted file from staging into the final driver dir.
-     * Common leading components ("lib/", "lib64/", "arm64-v8a/") are stripped
-     * so companion libraries land next to the main driver; the main driver
-     * itself is always flattened to the root because adrenotools dlopens it
-     * by bare soname from the namespace search path.
+     *
+     * Every shared object is flattened to the ROOT of the driver dir: the
+     * adrenotools driver namespace searches only customDriverDir itself
+     * (ld_library_path has no subdirectories), so a companion left in a
+     * nested dir ("turnip/lib64/libdep.so") would fail DT_NEEDED resolution
+     * at launch. Non-.so payload (configs, licenses) keeps its stripped
+     * relative path — it is not on the linker path.
+     *
+     * Collision rules, evaluated after the main driver is placed first:
+     *  - a companion whose basename equals the main soname is SKIPPED (the
+     *    main .so was already validated as arm64; an arm32 twin with the
+     *    same name must never clobber it);
+     *  - two companions with the same basename: the arm64 ELF wins over a
+     *    non-arm64 one; otherwise first-in wins and the loser is skipped.
      */
     private fun relocate(staging: File, extracted: List<String>, mainRel: String,
                          driverDir: File): Long {
         var total = 0L
+        val mainSoname = File(mainRel).name
+
+        // pass 1: the validated main driver, at the root
+        val mainSrc = File(staging, mainRel)
+        if (mainSrc.isFile) {
+            val dst = File(driverDir, mainSoname)
+            if (mainSrc.renameTo(dst) || runCatching { mainSrc.copyTo(dst, overwrite = true) }.isSuccess) {
+                total += dst.length()
+            }
+        }
+
+        // pass 2: companions, .so files flattened to the root
         for (rel in extracted) {
             val src = File(staging, rel)
-            if (!src.isFile) continue
-            val finalRel: String
-            var parts = rel.split('/')
-            // strip known container dirs from the front
-            while (parts.size > 1 && parts[0] in setOf("lib", "lib64", "arm64-v8a")) {
-                parts = parts.drop(1)
-            }
-            finalRel = if (rel == mainRel) {
-                src.name // main driver: root of the driver dir
+            if (!src.isFile || rel == mainRel) continue
+            val isSharedObject = src.name.endsWith(".so")
+            val finalRel: String = if (isSharedObject) {
+                src.name
             } else {
+                var parts = rel.split('/')
+                while (parts.size > 1 && parts[0] in setOf("lib", "lib64", "arm64-v8a")) {
+                    parts = parts.drop(1)
+                }
                 parts.joinToString("/")
             }
             val dst = File(driverDir, finalRel)
+            if (isSharedObject) {
+                if (dst.name == mainSoname) continue // never clobber the validated main
+                if (dst.isFile) {
+                    val dstIsArm64 = isArm64ElfSharedObject(dst)
+                    val srcIsArm64 = isArm64ElfSharedObject(src)
+                    if (dstIsArm64 || !srcIsArm64) continue // first-in wins / arm64 wins
+                    // arm64 source replaces a non-arm64 placeholder
+                    if (!dst.delete()) continue
+                }
+            }
             dst.parentFile?.mkdirs()
             if (src.renameTo(dst) || runCatching { src.copyTo(dst, overwrite = true) }.isSuccess) {
                 total += dst.length()

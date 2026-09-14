@@ -90,4 +90,10 @@
     <string name="driver_delete_confirm_title">Delete driver?</string>
     <string name="driver_delete_confirm">Delete driver \"%s\" from internal storage?</string>
     <string name="driver_note">The driver is applied when the next session starts. If a game already ran in this process, restart the app before switching drivers. If loading fails, the session falls back to the system driver.</string>
+    <string name="driver_reason_too_big">ZIP expanded beyond the 1 GiB limit</string>
+    <string name="driver_reason_no_stream">could not open the selected file</string>
+    <string name="driver_reason_empty_zip">empty or unreadable ZIP</string>
+    <string name="driver_reason_no_lib">no Vulkan driver library found (look for a Turnip ZIP)</string>
+    <string name="driver_reason_not_arm64">the driver in the ZIP is not a valid arm64 library</string>
+    <string name="notice_dismiss">OK</string>
 </resources>

@@ -90,4 +90,10 @@
     <string name="driver_delete_confirm_title">Excluir driver?</string>
     <string name="driver_delete_confirm">Excluir o driver \"%s\" do armazenamento interno?</string>
     <string name="driver_note">O driver é aplicado no início da próxima sessão. Se um jogo já rodou neste processo, reinicie o app antes de trocar de driver. Em caso de falha no carregamento, a sessão usa o driver do sistema.</string>
+    <string name="driver_reason_too_big">ZIP expandido além do limite de 1 GiB</string>
+    <string name="driver_reason_no_stream">não foi possível abrir o arquivo selecionado</string>
+    <string name="driver_reason_empty_zip">ZIP vazio ou ilegível</string>
+    <string name="driver_reason_no_lib">nenhuma biblioteca de driver Vulkan encontrada (procure um ZIP do Turnip)</string>
+    <string name="driver_reason_not_arm64">o driver no ZIP não é uma biblioteca arm64 válida</string>
+    <string name="notice_dismiss">OK</string>
 </resources>

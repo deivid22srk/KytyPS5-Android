@@ -506,23 +506,32 @@ bool HostInstallVulkanDriver(const std::string &driver_dir_in,
                 ALOGE("driver install: invalid soname '%s'", driver_soname.c_str());
                 return false;
         }
-        if (s.vulkan_driver_handle != nullptr) {
-                /* adrenotools linker namespaces and the soname-patched loader
-                 * copy are process-wide; a second install in the same process
-                 * is not supported (single-session process anyway). */
-                ALOGI("driver install: a driver is already installed in this process");
-                return true;
-        }
-        if (!HostLoadBox64(s)) {
-                ALOGE("driver install: libbox64.so not loadable");
-                return false;
-        }
-
         /* adrenotools concatenates customDriverDir + customDriverName, so the
          * directory MUST end with a separator */
         std::string driver_dir = driver_dir_in;
         if (!driver_dir.empty() && driver_dir.back() != '/') {
                 driver_dir += '/';
+        }
+
+        if (s.vulkan_driver_handle != nullptr) {
+                /* adrenotools linker namespaces and the soname-patched loader
+                 * copy are process-wide: a second driver install in the same
+                 * process is not possible. Idempotent re-install of the SAME
+                 * driver is fine; a different one must fail honestly so the
+                 * Kotlin layer warns the user (a session that already ran
+                 * blocks the restart anyway). */
+                if (s.vulkan_driver_id == driver_dir + driver_soname) {
+                        ALOGI("driver install: same driver already installed in this process");
+                        return true;
+                }
+                ALOGE("driver install: driver '%s' already installed in this process; "
+                      "cannot switch to '%s' without an app restart",
+                      s.vulkan_driver_id.c_str(), driver_soname.c_str());
+                return false;
+        }
+        if (!HostLoadBox64(s)) {
+                ALOGE("driver install: libbox64.so not loadable");
+                return false;
         }
 
         /* the driver's file operations (shader cache, config) are redirected
@@ -537,8 +546,8 @@ bool HostInstallVulkanDriver(const std::string &driver_dir_in,
         std::string tmp_dir = s.files_root + "/tmp";
         mkdir(tmp_dir.c_str(), 0700);
 
-        /* RTLD_NOW mirrors box64's own wrapped-vulkan usage; hooks live in
-         * nativeLibraryDir and are dlopen()ed inside the isolated namespace */
+        /* RTLD_NOW: resolve eagerly so a broken driver fails HERE, at
+         * install time, instead of at the first guest call. */
         void *handle = adrenotools_open_libvulkan(
                 RTLD_NOW,
                 ADRENOTOOLS_DRIVER_CUSTOM | ADRENOTOOLS_DRIVER_FILE_REDIRECT,
@@ -561,6 +570,7 @@ bool HostInstallVulkanDriver(const std::string &driver_dir_in,
         }
         set_handle(handle);
         s.vulkan_driver_handle = handle;
+        s.vulkan_driver_id = driver_dir + driver_soname;
         ALOGI("custom Vulkan driver installed via adrenotools: %s%s",
               driver_dir.c_str(), driver_soname.c_str());
         return true;

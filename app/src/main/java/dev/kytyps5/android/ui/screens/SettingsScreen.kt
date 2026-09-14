@@ -46,14 +46,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import dev.kytyps5.android.MainActivity
 import dev.kytyps5.android.R
 import dev.kytyps5.android.Screen
 import dev.kytyps5.android.emu.NativeBridge
-import dev.kytyps5.android.emu.VulkanDriver
 import dev.kytyps5.android.emu.VulkanDriverManager
+import dev.kytyps5.android.emu.VulkanDriverManager.VulkanDriver
 import dev.kytyps5.android.settings.EmuSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -83,7 +84,7 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
     var confirmDeleteDriver by remember { mutableStateOf<VulkanDriver?>(null) }
 
     LaunchedEffect(Unit) {
-        drivers = VulkanDriverManager.list(activity)
+        drivers = withContext(Dispatchers.IO) { VulkanDriverManager.list(activity) }
     }
 
     val zipLauncher = rememberLauncherForActivityResult(
@@ -96,7 +97,7 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                     VulkanDriverManager.importFromZip(activity, uri)
                 }
                 importingDriver = false
-                drivers = VulkanDriverManager.list(activity)
+                drivers = withContext(Dispatchers.IO) { VulkanDriverManager.list(activity) }
                 val msg = when (result) {
                     is VulkanDriverManager.ImportResult.Ok ->
                         activity.getString(R.string.driver_import_ok, result.driver.name)
@@ -231,8 +232,10 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                             onClick = { s = s.copy(vulkanDriverId = d.id) },
                             label = {
                                 Text(
-                                    "${d.name}" +
-                                        (if (d.version.isNotEmpty()) " (${d.version})" else "")
+                                    d.name +
+                                        (if (d.version.isNotEmpty()) " (${d.version})" else ""),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             },
                             modifier = Modifier.weight(1f),
@@ -416,12 +419,16 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
             text = { Text(stringResource(R.string.driver_delete_confirm, victim.name)) },
             confirmButton = {
                 TextButton(onClick = {
-                    val deleted = VulkanDriverManager.delete(activity, victim.id)
-                    if (deleted && s.vulkanDriverId == victim.id) {
-                        s = s.copy(vulkanDriverId = VulkanDriverManager.SYSTEM_DRIVER_ID)
+                    scope.launch {
+                        val deleted = withContext(Dispatchers.IO) {
+                            VulkanDriverManager.delete(activity, victim.id)
+                        }
+                        if (deleted && s.vulkanDriverId == victim.id) {
+                            s = s.copy(vulkanDriverId = VulkanDriverManager.SYSTEM_DRIVER_ID)
+                        }
+                        drivers = withContext(Dispatchers.IO) { VulkanDriverManager.list(activity) }
+                        confirmDeleteDriver = null
                     }
-                    drivers = VulkanDriverManager.list(activity)
-                    confirmDeleteDriver = null
                 }) {
                     Text(stringResource(R.string.driver_delete))
                 }

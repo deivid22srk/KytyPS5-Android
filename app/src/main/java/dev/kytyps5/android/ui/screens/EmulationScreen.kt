@@ -75,8 +75,10 @@ import dev.kytyps5.android.input.GamepadBridge.Companion.BUTTON_TOUCHPAD
 import dev.kytyps5.android.input.GamepadBridge.Companion.BUTTON_X
 import dev.kytyps5.android.input.GamepadBridge.Companion.BUTTON_Y
 import dev.kytyps5.android.input.VirtualPadController
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 
 /**
  * The emulation surface: the Vulkan SurfaceView is the real emulator
@@ -124,12 +126,16 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
         }
     }
 
-    // launch once per entry
+    // launch once per entry — the whole pre-start phase (settings/driver IO,
+    // adrenotools namespace setup, libbox64 dlopen) stays off the main thread
+    // so the UI never freezes during launch
     LaunchedEffect(game) {
         if (!started) {
             started = true
             virtualPad.connect()
-            startFailed = !session.start(game, activity.settings)
+            startFailed = !withContext(Dispatchers.IO) {
+                session.start(game, activity.settings)
+            }
         }
     }
 
@@ -275,6 +281,22 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
             }
         }
 
+        // ---- session notices (Vulkan driver active / fallback) ----
+        // rendered WHILE the session runs: a driver fallback that only the
+        // start-failure overlay would show is invisible on a good launch —
+        // and the whole point is that the user must know which driver ran
+        val notice by session.toast.collectAsState()
+        if (notice != null && running && !startFailed) {
+            SessionNoticeBanner(
+                text = notice ?: "",
+                onDismiss = { session.consumeToast() },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 44.dp),
+            )
+        }
+
         // ---- real log stream drawer ----
         if (showLogs) {
             LogDrawer(
@@ -323,6 +345,32 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
             },
             onDismiss = { showTextInput = false },
         )
+    }
+}
+
+@Composable
+private fun SessionNoticeBanner(text: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        color = Color(0xE62B2118),
+        contentColor = Color(0xFFFFD8A8),
+        modifier = modifier,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.notice_dismiss))
+            }
+        }
     }
 }
 
