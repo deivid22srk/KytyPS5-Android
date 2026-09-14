@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -85,6 +86,9 @@ class EmulatorSession(private val context: Context) {
         return box64Loadable!!
     }
 
+    /** Cheap presence check for UI gating (library screen badges). This
+     *  does NOT prove the library loads — [probeBox64] (real dlopen) is
+     *  the launch-path check; see [start]. */
     fun box64Ready(): Boolean = box64Loadable ?: box64Binary.exists()
 
     val bridgeShm: File
@@ -137,8 +141,11 @@ class EmulatorSession(private val context: Context) {
         NativeBridge.setCallback(EmuCallbacks(this))
     }
 
-    /** Launches the game with the given settings. Returns false when the launch failed. */
-    fun start(game: GameInfo, settings: EmuSettings): Boolean {
+    /** Launches the game with the given settings. Returns false when the launch failed.
+     *  Suspends: the box64 dlopen probe runs on Dispatchers.IO (never block
+     *  the UI thread on first-launch dlopen). Call from a coroutine
+     *  (EmulationScreen's LaunchedEffect). */
+    suspend fun start(game: GameInfo, settings: EmuSettings): Boolean {
         if (!ensureInit()) {
             _toast.value = "Falha ao inicializar o host (bridge.shm)"
             return false
@@ -173,9 +180,10 @@ class EmulatorSession(private val context: Context) {
             _toast.value = "Jogo inválido — eboot.bin não encontrado"
             return false
         }
-        // Real dlopen probe (cached): file presence alone does not prove
-        // the library loads in this process.
-        if (!probeBox64()) {
+        // Real dlopen probe (cached) off the UI thread: file presence
+        // alone does not prove the library loads in this process.
+        val box64ok = withContext(Dispatchers.IO) { probeBox64() }
+        if (!box64ok) {
             android.util.Log.e("KytySession", "libbox64.so not loadable")
             _toast.value = "Box64 indisponível neste aparelho"
             return false

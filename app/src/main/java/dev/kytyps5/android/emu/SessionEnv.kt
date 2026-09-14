@@ -4,14 +4,15 @@ import dev.kytyps5.android.settings.EmuSettings
 import java.io.File
 
 /**
- * Pure-JVM builder for the box64/guest session environment.
+ * Builder for the box64/guest session environment.
  *
- * Kept free of android.* imports so it is unit-testable on the host
- * (see SessionEnvTest). Upstream box64 variable reference:
- * docs/USAGE.md — list variables are `:`-separated
- * (`XXXX:YYYY:ZZZZ`), and guest libraries are located through
- * `BOX64_LD_LIBRARY_PATH` (there is no `BOX64_ROOTFS` variable upstream;
- * box64 does not chroot).
+ * This file imports no android.* APIs and only touches EmuSettings'
+ * platform-independent members (`toBox64Env`, `box64Log`), so host-JVM
+ * unit tests compile it with minimal stubs for the class reference
+ * (see SessionEnvTest). Upstream box64 variable reference: docs/USAGE.md —
+ * list variables are `:`-separated (`XXXX:YYYY:ZZZZ`), and guest libraries
+ * are located through `BOX64_LD_LIBRARY_PATH` (there is no `BOX64_ROOTFS`
+ * variable upstream; box64 does not chroot).
  */
 object SessionEnv {
 

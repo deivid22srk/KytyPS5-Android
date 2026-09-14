@@ -119,7 +119,7 @@ Every user-visible feature maps to a real mechanism:
 | Import game | SAF document-tree copy into app storage; rejects folders without `eboot.bin` |
 | Settings | 1:1 mapping to `kyty_emulator` CLI flags and `BOX64_*` environment variables |
 | GPU device list | live `vkEnumeratePhysicalDevices` on the phone |
-| Play | in-process `box64_main()` with the real argv/env (`BOX64_ROOTFS` → Debian sysroot); ANativeWindow published to the guest |
+| Play | in-process `box64_main()` with the real argv/env (`BOX64_LD_LIBRARY_PATH` → Debian sysroot, `BOX64_EMULATED_LIBS` → wrapped Vulkan); ANativeWindow published to the guest |
 | Virtual DualSense | a real bridge pad, same code path as physical controllers |
 | Physical gamepads | `InputDevice` → bridge pads (axes, buttons, triggers, dpad) |
 | Logs overlay | live tail of `logs/emulator.log` (guest stdout/stderr redirect) |
