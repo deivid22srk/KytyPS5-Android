@@ -2,14 +2,18 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 5f3990e..c3d6253 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1345,6 +1345,24 @@ add_library(mainobj OBJECT ${OS_LINUX_SRC} ${ELFLOADER_SRC} ${WRAPPEDS} ${WRAPPE
+@@ -1345,6 +1345,28 @@ add_library(mainobj OBJECT ${OS_LINUX_SRC} ${ELFLOADER_SRC} ${WRAPPEDS} ${WRAPPE
  add_dependencies(mainobj generate_git_head_target)
  add_dependencies(mainobj generate_dynacache_hashes)
  
 +# Library mode: build libbox64.so for in-process use by Android host apps
 +# (requires NOBOX64=ON so the executable target name is free).
-+if(ANDROID AND NOBOX64)
++if(NOBOX64)
 +    add_library(${BOX64} SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/box64lib.c)
++    # BOX64LIB gates the library-mode code paths (my_exit longjmp bridge,
++    # argv-shift skip) in mainobj sources; must be defined before mainobj
++    # compiles, hence a directory-scope definition.
++    add_compile_definitions(BOX64LIB)
 +    target_link_libraries(${BOX64} mainobj)
 +    if(DYNAREC)
 +        target_link_libraries(${BOX64} dynarec)
@@ -87,6 +91,59 @@ index 0000000..3b09293
 +}
 diff --git a/src/elfs/elfloader.c b/src/elfs/elfloader.c
 index 990e9b8..f3d7bf6 100644
+--- a/src/box64context.c
++++ b/src/box64context.c
+@@ -218,5 +218,20 @@ int NewBox64Context(int argc, const char** argv)
+     // get handle to box64 itself
+     #ifndef STATICBUILD
+     context->box64lib = dlopen(NULL, RTLD_NOW|RTLD_GLOBAL);
++     /* Library mode: box64 runs as a dlopen()-ed shared object (Android
++      * app class-loader namespace, or any RTLD_LOCAL host). The NULL
++      * handle describes the main executable and cannot see box64's own
++      * symbols, so every dlsym(box64lib, "my_XXX") fails and wrapped
++      * varargs symbols (printf, pthread_create, fopen, exit, ...) get
++      * NULL PLT slots - the guest then dies on the first such call,
++      * jumping to a non-executable page. Fix: probe the handle for a
++      * known internal, and when it is invisible, open box64 by its own
++      * soname - in the caller's namespace this finds the already-loaded
++      * object, and dlsym on that handle sees its symbols. */
++     if(!context->box64lib || !dlsym(context->box64lib, "my_printf")) {
++         void* self = dlopen("libbox64.so", RTLD_NOW|RTLD_GLOBAL);
++         if(self && dlsym(self, "my_printf"))
++             context->box64lib = self;
++     }
+     #endif
+     context->dlprivate = NewDLPrivate();
+--- a/src/core.c
++++ b/src/core.c
+@@ -1468,16 +1468,27 @@
+         if (strcmp(box64_guest_name, p)) {
+             ApplyEnvFileEntry(p);
+         }
+         // and now all change the argv (so libs libs mesa find the correct program names)
++        #ifdef BOX64LIB
++        /* Library mode: argv belongs to the host caller (bridge heap
++         * storage), not the contiguous kernel-stack block this in-place
++         * shift assumes. Rewriting it corrupts the caller's heap; the
++         * guest reads its argv from my_context->argv copies, so skip
++         * the shift and keep the caller's storage intact. */
++        extern int box64lib_active;
++        if (!box64lib_active)
++        #endif
++        {
+         char* endp = (char*)argv[argc-1];
+         while(*endp)
+             ++endp;    // find last argv[] address
+         uintptr_t diff = prog - argv[0]; // this is the difference we need to compensate
+         for(p=(char*)prog; p<=endp; ++p)
+             *(p - diff) = *p;  // copy all element at argv[nextarg] to argv[0]
+         memset(endp - diff, 0, diff); // fill reminder with NULL
+         for(int i=nextarg; i<argc; ++i)
+             argv[i] -= diff;    // adjust strings
++        }
+         my_context->orig_argc = argc;
+         my_context->orig_argv = (char**)argv;
+     }
 --- a/src/elfs/elfloader.c
 +++ b/src/elfs/elfloader.c
 @@ -48,6 +48,13 @@
