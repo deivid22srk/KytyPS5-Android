@@ -3132,3 +3132,183 @@ index 3f04927..365c0f1 100644
  #ifndef NOALIGN
  #define BOX64_MMAP47_LIMIT (1ULL << 47)
 
+diff --git a/src/custommem.c b/src/custommem.c
+index 365c0f1..7529099 100644
+--- a/src/custommem.c
++++ b/src/custommem.c
+@@ -623,6 +623,21 @@ static void setProtection_generic(uintptr_t addr, size_t sz, uint32_t prot, mem_
+ #ifdef TRACE_MEMSTAT
+ static uint64_t customMalloc_allocated = 0;
+ #endif
++
++#ifdef DYNAREC
++/* Android port: jump-table allocation failure diagnostics.
++ * customMalloc returning NULL here used to be an unchecked NULL fill that
++ * crashed the dynarec (str to address 0x0, killing the guest with SIGSEGV
++ * while FillBlock64 retried in a loop). Rate-limit the log so a memory
++ * pressure storm does not spam the logcat mirror. */
++static void LogJmptblAllocFailure(int level, size_t size)
++{
++    static int jmptbl_alloc_failures = 0;
++    int n = __atomic_add_fetch(&jmptbl_alloc_failures, 1, __ATOMIC_RELAXED);
++    if (n <= 8 || (n % 512) == 0)
++        printf_log(LOG_NONE, "Warning: custommem: jump-table level-%d allocation (%zu bytes) failed - block falls back to the interpreter path\n", level, size);
++}
++#endif
+ // the BTYPE_MAP is a simple bitmap based allocator: it will allocate slices of 128bytes only, from a large 128k mapping
+ // the bitmap itself is also allocated in that mapping, as a slice of 128bytes, at the end of the mapping (and so marked as allocated)
+ void* map128_customMalloc(size_t size, int is32bits)
+@@ -1995,6 +2010,12 @@ static uintptr_t *create_jmptbl(int for32bits, uintptr_t idx0, uintptr_t idx1, u
+ {
+     if(box64_jmptbl3[idx3] == box64_jmptbldefault2) {
+         uintptr_t*** tbl = (uintptr_t***)customMalloc((1<<JMPTABL_SHIFT2)*sizeof(uintptr_t**));
++        if(!tbl) {
++            /* bail out: falling through would deref NULL below (crash) and a
++             * later level install would write into the static sentinel arrays */
++            LogJmptblAllocFailure(2, (1<<JMPTABL_SHIFT2)*sizeof(uintptr_t**));
++            return NULL;
++        }
+         for(int i=0; i<(1<<JMPTABL_SHIFT2); ++i)
+             tbl[i] = box64_jmptbldefault1;
+         if(native_lock_storeifref(&box64_jmptbl3[idx3], tbl, box64_jmptbldefault2)!=tbl)
+@@ -2009,6 +2030,10 @@ static uintptr_t *create_jmptbl(int for32bits, uintptr_t idx0, uintptr_t idx1, u
+     if(for32bits) return NULL;
+     if(box64_jmptbl3[idx3][idx2] == box64_jmptbldefault1) {
+         uintptr_t** tbl = (uintptr_t**)customMalloc((1<<JMPTABL_SHIFT1)*sizeof(uintptr_t*));
++        if(!tbl) {
++            LogJmptblAllocFailure(1, (1<<JMPTABL_SHIFT1)*sizeof(uintptr_t*));
++            return NULL;
++        }
+         for(int i=0; i<(1<<JMPTABL_SHIFT1); ++i)
+             tbl[i] = box64_jmptbldefault0;
+         if(native_lock_storeifref(&box64_jmptbl3[idx3][idx2], tbl, box64_jmptbldefault1)!=tbl)
+@@ -2022,6 +2047,14 @@ static uintptr_t *create_jmptbl(int for32bits, uintptr_t idx0, uintptr_t idx1, u
+     }
+     if(box64_jmptbl3[idx3][idx2][idx1] == box64_jmptbldefault0) {
+         uintptr_t* tbl = (uintptr_t*)customMalloc((1<<JMPTABL_SHIFT0)*sizeof(uintptr_t));
++        if(!tbl) {
++            /* return NULL so CAS callers do not write into the shared static
++             * default0 slots; pure address lookups (getJumpTableAddress64)
++             * fall back to &box64_jmptbldefault0[idx0], which holds
++             * native_next: generated code lands on the interpreter. */
++            LogJmptblAllocFailure(0, (1<<JMPTABL_SHIFT0)*sizeof(uintptr_t));
++            return NULL;
++        }
+         for(int i=0; i<(1<<JMPTABL_SHIFT0); ++i)
+             tbl[i] = (uintptr_t)native_next;
+         if(native_lock_storeifref(&box64_jmptbl3[idx3][idx2][idx1], tbl, box64_jmptbldefault0)!=tbl)
+@@ -2040,6 +2073,12 @@ static uintptr_t *create_jmptbl(int for32bits, uintptr_t idx0, uintptr_t idx1, u
+ {
+     if(box64_jmptbl2[idx2] == box64_jmptbldefault1) {
+         uintptr_t** tbl = (uintptr_t**)customMalloc((1<<JMPTABL_SHIFT1)*sizeof(uintptr_t*));
++        if(!tbl) {
++            /* bail out: falling through would deref NULL below (crash) and a
++             * later level install would write into the static sentinel arrays */
++            LogJmptblAllocFailure(1, (1<<JMPTABL_SHIFT1)*sizeof(uintptr_t*));
++            return NULL;
++        }
+         for(int i=0; i<(1<<JMPTABL_SHIFT1); ++i)
+             tbl[i] = box64_jmptbldefault0;
+         if(native_lock_storeifref(&box64_jmptbl2[idx2], tbl, box64_jmptbldefault1)!=tbl)
+@@ -2054,6 +2093,14 @@ static uintptr_t *create_jmptbl(int for32bits, uintptr_t idx0, uintptr_t idx1, u
+     if(for32bits) return NULL;
+     if(box64_jmptbl2[idx2][idx1] == box64_jmptbldefault0) {
+         uintptr_t* tbl = (uintptr_t*)customMalloc((1<<JMPTABL_SHIFT0)*sizeof(uintptr_t));
++        if(!tbl) {
++            /* return NULL so CAS callers do not write into the shared static
++             * default0 slots; pure address lookups (getJumpTableAddress64)
++             * fall back to &box64_jmptbldefault0[idx0], which holds
++             * native_next: generated code lands on the interpreter. */
++            LogJmptblAllocFailure(0, (1<<JMPTABL_SHIFT0)*sizeof(uintptr_t));
++            return NULL;
++        }
+         for(int i=0; i<(1<<JMPTABL_SHIFT0); ++i)
+             tbl[i] = (uintptr_t)native_next;
+         if(native_lock_storeifref(&box64_jmptbl2[idx2][idx1], tbl, box64_jmptbldefault0)!=tbl)
+@@ -2082,9 +2129,17 @@ int addJumpTableIfDefault64(void* addr, void* jmp)
+     idx0 = (((uintptr_t)addr)                )&JMPTABLE_MASK0;
+ 
+     #ifdef JMPTABL_SHIFT4
+-    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3), jmp, native_next)==native_next)?1:0;
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2, idx3);
++        if(!slot) return 0;
++        return (native_lock_storeifref2(slot, jmp, native_next)==native_next)?1:0;
++    }
+     #else
+-    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2), jmp, native_next)==native_next)?1:0;
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2);
++        if(!slot) return 0;
++        return (native_lock_storeifref2(slot, jmp, native_next)==native_next)?1:0;
++    }
+     #endif
+ }
+ void setJumpTableDefault64(void* addr)
+@@ -2126,9 +2181,17 @@ int setJumpTableDefaultIfRef64(void* addr, void* jmp)
+         return 0;
+     idx0 = (((uintptr_t)addr)    )&JMPTABLE_MASK0;
+     #ifdef JMPTABL_SHIFT4
+-    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3), native_next, jmp)==jmp)?1:0;
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2, idx3);
++        if(!slot) return 0;
++        return (native_lock_storeifref2(slot, native_next, jmp)==jmp)?1:0;
++    }
+     #else
+-    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2), native_next, jmp)==jmp)?1:0;
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2);
++        if(!slot) return 0;
++        return (native_lock_storeifref2(slot, native_next, jmp)==jmp)?1:0;
++    }
+     #endif
+ }
+ void setJumpTableDefaultRef64(void* addr, void* jmp)
+@@ -2162,11 +2225,20 @@ int setJumpTableIfRef64(void* addr, void* jmp, void* ref)
+     idx1 = (((uintptr_t)addr)>>JMPTABL_START1)&JMPTABLE_MASK1;
+     idx0 = (((uintptr_t)addr)    )&JMPTABLE_MASK0;
+     #ifdef JMPTABL_SHIFT4
+-    void* ret = native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3), jmp, ref);
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2, idx3);
++        if(!slot) return 0;
++        void* ret = native_lock_storeifref2(slot, jmp, ref);
++        return ((ret==ref) || (ret==jmp))?1:0;
++    }
+     #else
+-    void* ret = native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2), jmp, ref);
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2);
++        if(!slot) return 0;
++        void* ret = native_lock_storeifref2(slot, jmp, ref);
++        return ((ret==ref) || (ret==jmp))?1:0;
++    }
+     #endif
+-    return ((ret==ref) || (ret==jmp))?1:0;
+ }
+ int isJumpTableDefault64(void* addr)
+ {
+@@ -2227,9 +2299,20 @@ uintptr_t getJumpTableAddress64(uintptr_t addr)
+     idx1 = ((addr)>>JMPTABL_START1)&JMPTABLE_MASK1;
+     idx0 = ((addr)                )&JMPTABLE_MASK0;
+     #ifdef JMPTABL_SHIFT4
+-    return (uintptr_t)create_jmptbl(0, idx0, idx1, idx2, idx3);
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2, idx3);
++        /* allocation failure: hand out the static default slot instead - it
++         * holds native_next, so generated code jumps to the interpreter
++         * dispatcher rather than dereferencing a NULL table (crash). */
++        if(!slot) return (uintptr_t)&box64_jmptbldefault0[idx0];
++        return (uintptr_t)slot;
++    }
+     #else
+-    return (uintptr_t)create_jmptbl(0, idx0, idx1, idx2);
++    {
++        uintptr_t* slot = create_jmptbl(0, idx0, idx1, idx2);
++        if(!slot) return (uintptr_t)&box64_jmptbldefault0[idx0];
++        return (uintptr_t)slot;
++    }
+     #endif
+ }
+ 

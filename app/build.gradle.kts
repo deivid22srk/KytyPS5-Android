@@ -13,8 +13,8 @@ android {
         applicationId = "dev.kytyps5.android"
         minSdk = 28 // box64 uses pthread_attr_setinheritsched & mutexattr_setprotocol (bionic API 28+)
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.3"
+        versionCode = 7
+        versionName = "0.3.4"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

@@ -15,6 +15,8 @@
 #include "graphics/presentation/window/windowInternal.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -27,6 +29,36 @@
 #define KYTY_DBG_INPUT
 
 namespace Libs::Graphics {
+
+namespace {
+
+/* vkQueuePresentKHR / vkAcquireNextImageKHR return VK_SUBOPTIMAL_KHR when the
+ * operation SUCCEEDED but the swapchain is no longer optimal (typically a
+ * preTransform vs surface-transform mismatch on Android: the panel is portrait,
+ * the activity is landscape, Turnip reports currentTransform=ROTATE_90 while the
+ * swapchain was created with IDENTITY, so EVERY present is "suboptimal").
+ * Per the Vulkan spec the image was still acquired/presented - the application
+ * MAY keep using the swapchain. Recreating it on every present (as before)
+ * produced an infinite recreate loop: each recreation disconnects the
+ * ANativeWindow and allocates a fresh gralloc buffer queue, so a few hundred
+ * recreations exhaust the 39-bit VA / commit budget and custommem mmaps start
+ * failing with ENOMEM (observed on a moto g34 5G: 545 recreations in 3 s,
+ * subsequent dynarec FillBlock crashes and guest death, exit 139).
+ * Treatment: accept SUBOPTIMAL as success, log sparsely. */
+std::atomic<uint64_t> g_suboptimal_events {0};
+
+void LogSuboptimal(bool acquire) {
+	const auto count = g_suboptimal_events.fetch_add(1, std::memory_order_relaxed);
+	/* 1st event, then every 512th: keep the log useful without spamming. */
+	if (count == 0 || (count % 512) == 0) {
+		LOGF("warning: vk%s returned VK_SUBOPTIMAL_KHR (swapchain usable, continuing); "
+		     "total events so far: %llu\n",
+		     acquire ? "AcquireNextImageKHR" : "QueuePresentKHR",
+		     static_cast<unsigned long long>(count + 1));
+	}
+}
+
+} // namespace
 
 struct Presenter::Frame {
 	VulkanImage image;
@@ -326,12 +358,52 @@ struct Presenter::Impl {
 		EXIT_IF(owner.render_context == nullptr);
 		swapchain.Create();
 		frames.Initialize(swapchain.ImageCount(), swapchain.Format());
+		m_last_recreate_extent    = window.surface_capabilities.capabilities.currentExtent;
+		m_last_recreate_transform = window.surface_capabilities.capabilities.currentTransform;
+		m_last_recreate_min_count = window.surface_capabilities.capabilities.minImageCount;
+		m_last_recreate_tick      = std::chrono::steady_clock::now();
 	}
 
 	void RecoverSwapchain(Swapchain::Status status) {
+		const bool surface_lost = status == Swapchain::Status::SurfaceLost;
+		if (!surface_lost) {
+			/* Anti-spin guard: an out-of-date swapchain genuinely needs a
+			 * recreate only when the surface capabilities CHANGED (resize,
+			 * rotation). If the caps are identical to the ones the current
+			 * swapchain was built with and we recreated very recently, keep
+			 * the current swapchain instead of tearing down and re-creating
+			 * the ANativeWindow buffer queue in a tight loop (each recreate
+			 * disconnects the surface and allocates fresh gralloc buffers,
+			 * which exhausts the 39-bit VA / commit budget on phones). */
+			window.RefreshSurfaceCapabilities();
+			const auto& caps = window.surface_capabilities.capabilities;
+			const bool caps_same =
+			    caps.currentExtent == m_last_recreate_extent &&
+			    caps.currentTransform == m_last_recreate_transform &&
+			    caps.minImageCount == m_last_recreate_min_count;
+			const auto now = std::chrono::steady_clock::now();
+			const auto since_ms =
+			    std::chrono::duration_cast<std::chrono::milliseconds>(
+			        now - m_last_recreate_tick)
+			        .count();
+			if (caps_same && since_ms < 1000) {
+				const auto skipped =
+				    m_recreates_skipped.fetch_add(1, std::memory_order_relaxed);
+				if (skipped == 0 || (skipped % 64) == 0) {
+					LOGF("warning: swapchain recovery skipped %llu times within 1 s "
+				     "(surface capabilities unchanged)\n",
+				     static_cast<unsigned long long>(skipped + 1));
+				}
+				return;
+			}
+			m_last_recreate_extent    = caps.currentExtent;
+			m_last_recreate_transform = caps.currentTransform;
+			m_last_recreate_min_count = caps.minImageCount;
+			m_last_recreate_tick      = now;
+		}
 		LOGF("Recovering Vulkan swapchain%s\n",
-		     status == Swapchain::Status::SurfaceLost ? " and surface" : "");
-		swapchain.Recreate(status == Swapchain::Status::SurfaceLost);
+		     surface_lost ? " and surface" : "");
+		swapchain.Recreate(surface_lost);
 		frames.SetFormat(swapchain.Format());
 	}
 
@@ -362,6 +434,13 @@ struct Presenter::Impl {
 	CommandScheduler      present_scheduler;
 	FramePool             frames;
 	std::atomic<uint64_t> presented_ime_revision {0};
+
+	vk::Extent2D                            m_last_recreate_extent {};
+	vk::SurfaceTransformFlagBitsKHR         m_last_recreate_transform {
+	    vk::SurfaceTransformFlagBitsKHR::eIdentity};
+	uint32_t                                m_last_recreate_min_count {0};
+	std::chrono::steady_clock::time_point   m_last_recreate_tick {};
+	std::atomic<uint64_t>                   m_recreates_skipped {0};
 };
 
 void Swapchain::Create() {
@@ -562,8 +641,9 @@ Swapchain::Status Swapchain::AcquireNextImage() {
 	switch (result) {
 		case vk::Result::eSuccess: break;
 		case vk::Result::eSuboptimalKHR:
-			LOGF("vkAcquireNextImageKHR returned vk::Result::eSuboptimalKHR\n");
-			return Status::Recreate;
+			/* image acquired; swapchain usable (see note at g_suboptimal_events) */
+			LogSuboptimal(true);
+			break;
 		case vk::Result::eErrorOutOfDateKHR:
 			LOGF("vkAcquireNextImageKHR returned vk::Result::eErrorOutOfDateKHR\n");
 			return Status::Recreate;
@@ -693,8 +773,9 @@ Swapchain::Status Swapchain::Present() {
 	switch (result) {
 		case vk::Result::eSuccess: break;
 		case vk::Result::eSuboptimalKHR:
-			LOGF("vkQueuePresentKHR returned vk::Result::eSuboptimalKHR\n");
-			return Status::Recreate;
+			/* frame presented; swapchain usable (see note at g_suboptimal_events) */
+			LogSuboptimal(false);
+			break;
 		case vk::Result::eErrorOutOfDateKHR:
 			LOGF("vkQueuePresentKHR returned vk::Result::eErrorOutOfDateKHR\n");
 			return Status::Recreate;
