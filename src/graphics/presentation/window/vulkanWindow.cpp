@@ -70,7 +70,10 @@ vk::PhysicalDeviceVulkan12Features WindowContext::RequiredVulkan12Features() noe
 	features.timelineSemaphore        = VK_TRUE;
 	features.shaderOutputLayer        = VK_TRUE;
 	features.bufferDeviceAddress      = VK_TRUE;
-	features.shaderBufferInt64Atomics = VK_TRUE;
+	// shaderBufferInt64Atomics is NOT listed here: mobile drivers (Turnip on
+	// Adreno 6xx, Mali) commonly lack it. It is only exercised by guest shaders
+	// that actually perform 64-bit atomic buffer accesses, so it is enabled
+	// opportunistically in VulkanCreateDevice instead of being required.
 	return features;
 }
 
@@ -238,26 +241,22 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 		}
 
 		if (color_write_ext.colorWriteEnable != VK_TRUE) {
-			LOGF("colorWriteEnable is not supported\n");
-#if !defined(__APPLE__)
-			skip_device = true;
-#endif
+			LOGF("colorWriteEnable is not supported (optional; static colorWriteMask "
+			     "fallback will be used)\n");
 		}
 
 		if (depth_clip_control.depthClipControl != VK_TRUE) {
-			LOGF("depthClipControl is not supported\n");
-			skip_device = true;
+			LOGF("depthClipControl is not supported (optional; default 0..1 depth "
+			     "range will be used)\n");
 		}
 		if (depth_clip_enable.depthClipEnable != VK_TRUE) {
-			LOGF("depthClipEnable is not supported\n");
-#if !defined(__APPLE__)
-			skip_device = true;
-#endif
+			LOGF("depthClipEnable is not supported (optional; default depth clipping "
+			     "will be used)\n");
 		}
 #if !defined(__APPLE__)
 		if (fragment_barycentric.fragmentShaderBarycentric != VK_TRUE) {
-			LOGF("fragmentShaderBarycentric is not supported\n");
-			skip_device = true;
+			LOGF("fragmentShaderBarycentric is not supported (optional; guest shaders "
+			     "using barycentric inputs may fail to compile)\n");
 		}
 #endif
 
@@ -281,10 +280,9 @@ static void VulkanFindPhysicalDevice(vk::Instance instance, vk::SurfaceKHR surfa
 			LOGF("bufferDeviceAddress is not supported\n");
 			skip_device = true;
 		}
-		if (required_features12.shaderBufferInt64Atomics == VK_TRUE &&
-		    features12.shaderBufferInt64Atomics != VK_TRUE) {
-			LOGF("shaderBufferInt64Atomics is not supported\n");
-			skip_device = true;
+		if (features12.shaderBufferInt64Atomics != VK_TRUE) {
+			LOGF("shaderBufferInt64Atomics is not supported (optional; guest shaders "
+			     "using 64-bit buffer atomics may fail to compile)\n");
 		}
 		if (features13.robustImageAccess != VK_TRUE) {
 			LOGF("robustImageAccess is not supported\n");
@@ -549,30 +547,38 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	queue_create_info.queueCount       = 1;
 	queue_create_info.pQueuePriorities = &queue_priority;
 
+	/* Depth-clip / color-write extensions are optional at runtime: Turnip (Adreno 6xx)
+	 * and other mobile drivers may not expose them. Their feature structs are only
+	 * chained into VkDeviceCreateInfo when the extension is actually enabled, and the
+	 * renderer consults GraphicContext flags to apply the same fallbacks as MoltenVK. */
+	const bool depth_clip_control_enabled =
+	    HasExtension(device_extensions, VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
+	const bool depth_clip_enable_enabled =
+	    HasExtension(device_extensions, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
+	const bool color_write_enable_enabled =
+	    HasExtension(device_extensions, VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
+
+	graphics.depth_clip_control_ext_enabled = depth_clip_control_enabled;
+	graphics.depth_clip_enable_ext_enabled  = depth_clip_enable_enabled;
+	graphics.color_write_enable_ext_enabled = color_write_enable_enabled;
+
 	vk::PhysicalDeviceColorWriteEnableFeaturesEXT color_write_ext {};
 	color_write_ext.sType = vk::StructureType::ePhysicalDeviceColorWriteEnableFeaturesEXT;
 	color_write_ext.pNext = nullptr;
-	color_write_ext.colorWriteEnable = VK_TRUE;
+	color_write_ext.colorWriteEnable = color_write_enable_enabled ? VK_TRUE : VK_FALSE;
 
 	vk::PhysicalDeviceDepthClipEnableFeaturesEXT depth_clip_enable {};
 	depth_clip_enable.sType = vk::StructureType::ePhysicalDeviceDepthClipEnableFeaturesEXT;
-	depth_clip_enable.pNext = &color_write_ext;
-	depth_clip_enable.depthClipEnable = VK_TRUE;
+	depth_clip_enable.pNext = color_write_enable_enabled ? &color_write_ext : nullptr;
+	depth_clip_enable.depthClipEnable = depth_clip_enable_enabled ? VK_TRUE : VK_FALSE;
 
 	vk::PhysicalDeviceDepthClipControlFeaturesEXT depth_clip_control {};
 	depth_clip_control.sType = vk::StructureType::ePhysicalDeviceDepthClipControlFeaturesEXT;
-	// MoltenVK lacks VK_EXT_depth_clip_enable and VK_EXT_color_write_enable, so drop those
-	// feature structs from the chain on macOS (the renderer falls back to default depth
-	// clipping and static color-write masks).
-#if defined(__APPLE__)
-	depth_clip_control.pNext = nullptr;
-#else
-	depth_clip_control.pNext = &depth_clip_enable;
-#endif
-	depth_clip_control.depthClipControl = VK_TRUE;
+	depth_clip_control.pNext = depth_clip_enable_enabled ? &depth_clip_enable : nullptr;
+	depth_clip_control.depthClipControl = depth_clip_control_enabled ? VK_TRUE : VK_FALSE;
 
 	auto features12  = WindowContext::RequiredVulkan12Features();
-	features12.pNext = &depth_clip_control;
+	features12.pNext = depth_clip_control_enabled ? &depth_clip_control : nullptr;
 
 	vk::PhysicalDeviceVulkan13Features supported_features13 {};
 	supported_features13.sType = vk::StructureType::ePhysicalDeviceVulkan13Features;
@@ -626,6 +632,14 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	physical_device.getFeatures2(&supported_features2);
 	const auto required_features12 = WindowContext::RequiredVulkan12Features();
 	const auto required_features13 = WindowContext::RequiredVulkan13Features();
+	// Enable 64-bit buffer atomics only when the driver actually supports them
+	// (Turnip on Adreno 6xx does not). All-FALSE feature bits are legal here; the
+	// recompiler only emits CapabilityInt64Atomics for guest shaders that perform
+	// 64-bit atomic buffer accesses, so simple titles still run without it.
+	features12.shaderBufferInt64Atomics = supported_features12.shaderBufferInt64Atomics;
+	if (supported_features12.shaderBufferInt64Atomics != VK_TRUE) {
+		LOGF("Vulkan feature shaderBufferInt64Atomics unavailable - continuing without it\n");
+	}
 	EXIT_NOT_IMPLEMENTED(required_features12.samplerMirrorClampToEdge == VK_TRUE &&
 	                     supported_features12.samplerMirrorClampToEdge != VK_TRUE);
 	EXIT_NOT_IMPLEMENTED(required_features12.timelineSemaphore == VK_TRUE &&
@@ -645,10 +659,11 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	                     supported_features12.shaderOutputLayer != VK_TRUE);
 	EXIT_NOT_IMPLEMENTED(required_features12.bufferDeviceAddress == VK_TRUE &&
 	                     supported_features12.bufferDeviceAddress != VK_TRUE);
-	EXIT_NOT_IMPLEMENTED(required_features12.shaderBufferInt64Atomics == VK_TRUE &&
-	                     supported_features12.shaderBufferInt64Atomics != VK_TRUE);
 #if !defined(__APPLE__)
-	EXIT_NOT_IMPLEMENTED(supported_fragment_barycentric.fragmentShaderBarycentric != VK_TRUE);
+	if (supported_fragment_barycentric.fragmentShaderBarycentric != VK_TRUE) {
+		LOGF("Vulkan feature fragmentShaderBarycentric unavailable - continuing without "
+		     "it\n");
+	}
 #endif
 	vk::PhysicalDeviceFeatures device_features {};
 	device_features.fragmentStoresAndAtomics = VK_TRUE;
@@ -678,8 +693,12 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	vk::PhysicalDeviceFragmentShaderBarycentricFeaturesKHR fragment_barycentric {};
 	fragment_barycentric.sType =
 	    vk::StructureType::ePhysicalDeviceFragmentShaderBarycentricFeaturesKHR;
-	fragment_barycentric.pNext                     = &features12;
-	fragment_barycentric.fragmentShaderBarycentric = VK_TRUE;
+	fragment_barycentric.pNext = &features12;
+	// Enable only if the driver supports it AND the extension will be enabled;
+	// requesting an unsupported feature would fail vkCreateDevice with
+	// VK_ERROR_FEATURE_LOST on drivers like Turnip (Adreno 6xx).
+	fragment_barycentric.fragmentShaderBarycentric =
+	    supported_fragment_barycentric.fragmentShaderBarycentric;
 	robustness2.pNext                              = &fragment_barycentric;
 #endif
 	if (robustness2_ext_enabled) {
@@ -1064,19 +1083,20 @@ void WindowContext::CreateVulkan() {
 	surface = native_surface;
 
 	std::vector<const char*> device_extensions = {
-	    VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME,
-	    VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, "VK_KHR_maintenance1"};
+	    VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+	    "VK_KHR_maintenance1"};
 
 #if defined(__APPLE__)
-	// MoltenVK lacks VK_EXT_depth_clip_enable and VK_EXT_color_write_enable; the renderer
-	// falls back to default depth clipping and static color-write masks on macOS. It also
-	// requires VK_KHR_portability_subset per the Vulkan portability spec.
+	// MoltenVK requires VK_KHR_portability_subset per the Vulkan portability spec.
 	device_extensions.push_back("VK_KHR_portability_subset");
-#else
-	device_extensions.push_back(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
-	device_extensions.push_back(VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
-	device_extensions.push_back(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
 #endif
+
+	/* VK_EXT_depth_clip_control / VK_EXT_depth_clip_enable / VK_EXT_color_write_enable
+	 * (and VK_KHR_fragment_shader_barycentric) are added conditionally AFTER device
+	 * selection: Turnip (Adreno 6xx) and other mobile drivers may not expose them, and
+	 * requiring them here would reject the only GPU on the device with "Could not find
+	 * suitable device". The renderer degrades gracefully without them (same fallbacks
+	 * as MoltenVK on macOS). */
 
 #ifdef KYTY_ENABLE_DEBUG_PRINTF
 	if (Config::SpirvDebugPrintfEnabled()) {
@@ -1126,6 +1146,38 @@ void WindowContext::CreateVulkan() {
 		    HasExtension(available_extensions, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME)) {
 			device_extensions.push_back(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
 			device_extensions.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+		}
+		if (HasExtension(available_extensions, VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME)) {
+			device_extensions.push_back(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+			LOGF("Vulkan extension %s: enabled\n",
+			     VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+		} else {
+			LOGF("Vulkan extension %s: not supported - continuing without it\n",
+			     VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+		}
+		if (HasExtension(available_extensions, VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME)) {
+			device_extensions.push_back(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
+			LOGF("Vulkan extension %s: enabled\n",
+			     VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
+		} else {
+			LOGF("Vulkan extension %s: not supported - continuing without it\n",
+			     VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
+		}
+		if (HasExtension(available_extensions, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME)) {
+			device_extensions.push_back(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
+			LOGF("Vulkan extension %s: enabled\n",
+			     VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
+		} else {
+			LOGF("Vulkan extension %s: not supported - continuing without it\n",
+			     VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
+		}
+		if (HasExtension(available_extensions, VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME)) {
+			device_extensions.push_back(VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
+			LOGF("Vulkan extension %s: enabled\n",
+			     VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
+		} else {
+			LOGF("Vulkan extension %s: not supported - continuing without it\n",
+			     VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
 		}
 	}
 

@@ -87,7 +87,12 @@ public:
 			m_fd = -1;
 			return;
 		}
-		auto* backing = mmap(nullptr, m_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0);
+		/* MAP_NORESERVE: tmpfs-backed shared mappings otherwise reserve swap for
+		 * the whole range up front; on swap-less Android devices (zram only) the
+		 * kernel's commit accounting then rejects large backings with ENOMEM even
+		 * though pages are only materialized on first touch. */
+		auto* backing = mmap(nullptr, m_size, PROT_READ | PROT_WRITE,
+				     MAP_SHARED | MAP_NORESERVE, m_fd, 0);
 		if (backing == MAP_FAILED) {
 			LOGF_COLOR(Log::Color::Red, "\t direct-memory backing: writable alias failed: %d\n",
 			           errno);
@@ -624,8 +629,11 @@ private:
 
 	void* MapView(uint64_t vaddr, uint64_t size, uint64_t backing_offset, VirtualMemory::Mode mode,
 	              FailureReason* failure_reason) {
+		/* MAP_NORESERVE mirrors the backing-store alias: every guest view of the
+		 * same memfd would otherwise reserve the same swap again. */
 		void* ptr = mmap(reinterpret_cast<void*>(vaddr), size, GetProtect(mode),
-		                 MAP_SHARED | MAP_FIXED, m_fd, static_cast<off_t>(backing_offset));
+				 MAP_SHARED | MAP_FIXED | MAP_NORESERVE, m_fd,
+				 static_cast<off_t>(backing_offset));
 		if (ptr == MAP_FAILED) {
 			SetFailure(failure_reason, FailureReason::FixedMapViewFailed);
 			return nullptr;
@@ -656,19 +664,54 @@ public:
 		SYSTEM_INFO info {};
 		GetSystemInfo(&info);
 		m_granularity = info.dwAllocationGranularity;
-#endif
 		ReserveGuestRegions();
 		m_backing = new GuestBackingStore(backing_size);
 		if (!m_backing->IsAvailable()) {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
 			EXIT("could not reserve %" PRIu64 " MB for guest direct memory. Windows commits\n"
 			     "this up front, so the paging file is usually what needs to be larger.\n",
 			     backing_size / (1024U * 1024U));
-#else
-			EXIT("could not reserve %" PRIu64 " MB for guest direct memory\n",
-			     backing_size / (1024U * 1024U));
-#endif
 		}
+#else
+		ReserveGuestRegions();
+		/* The writable alias needs one contiguous host VA range of `backing_size`.
+		 * Custom Vulkan drivers preloaded into the process (adrenotools), box64
+		 * dynarec mappings and the game's loaded segments fragment the 39-bit VA
+		 * space and raise the commit level, so even a 4 GiB reservation can fail
+		 * with ENOMEM depending on the driver (observed: 4 GiB OK with
+		 * wn-turnip-1.06, ENOMEM with turnip_mrpurple_t30). Retry with halved
+		 * sizes instead of dying: the reduced direct-memory size is advertised to
+		 * the game, which still boots (small titles fit). */
+		uint64_t size       = backing_size;
+		uint64_t size_floor = g_flexible_memory_size + (256ull * 1024ull * 1024ull);
+		if (size_floor > backing_size) {
+			size_floor = backing_size;
+		}
+		while (true) {
+			m_backing = new GuestBackingStore(size);
+			if (m_backing->IsAvailable()) {
+				break;
+			}
+			delete m_backing;
+			m_backing = nullptr;
+			if (size / 2 < size_floor) {
+				EXIT("could not reserve %" PRIu64 " MB for guest direct memory "
+				     "(contiguous address space or commit budget unavailable)\n",
+				     size / (1024U * 1024U));
+			}
+			LOGF_COLOR(Log::Color::Red,
+				   "\t direct-memory backing: %" PRIu64 " MB failed, retrying with %" PRIu64
+				   " MB\n",
+				   size / (1024U * 1024U), size / 2 / (1024U * 1024U));
+			size /= 2;
+		}
+		if (size != backing_size) {
+			LOGF_COLOR(Log::Color::Red,
+				   "\t direct-memory backing reduced to %" PRIu64 " MB (requested %" PRIu64
+				   " MB)\n",
+				   size / (1024U * 1024U), backing_size / (1024U * 1024U));
+			SetDirectMemoryEffectiveSize(size);
+		}
+#endif
 	}
 
 	~GuestAddressSpace() {

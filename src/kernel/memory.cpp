@@ -71,6 +71,16 @@ static uint64_t                      g_flexible_memory_size        = DEFAULT_FLE
 static bool                          g_flexible_memory_size_frozen = false;
 static Graphics::GpuResourceManager* g_gpu_resources               = nullptr;
 
+/* Effective direct-memory backing size after GuestAddressSpace applied its
+ * retry-with-smaller-size logic (0 = env/config default still stands). Set
+ * BEFORE PhysicalMemory is constructed so Size()/KernelGetDirectMemorySize()
+ * advertise what actually got reserved. */
+static std::atomic<uint64_t> g_effective_direct_memory_size = 0;
+
+static void SetDirectMemoryEffectiveSize(uint64_t effective_size) {
+        g_effective_direct_memory_size.store(effective_size, std::memory_order_relaxed);
+}
+
 static Graphics::GpuResourceManager& GetGpuResources() {
         EXIT_IF(g_gpu_resources == nullptr);
         return *g_gpu_resources;
@@ -684,7 +694,10 @@ public:
          * segments) the kernel cannot always find such a gap and mmap fails
          * with ENOMEM, which is fatal for Memory::Initialize(). Make the
          * backing tunable at runtime instead (default 4 GiB, enough for
-         * small titles on 4-8 GB phones; raise with KYTY_DIRECT_MEMORY_MB). */
+         * small titles on 4-8 GB phones; raise with KYTY_DIRECT_MEMORY_MB).
+         * GuestAddressSpace may further shrink it (halving retries) when even
+         * the configured size cannot be reserved; the reduced value is
+         * advertised through g_effective_direct_memory_size. */
         static uint64_t TotalSize() {
                 static const uint64_t size = [] () -> uint64_t {
                         const char* env = std::getenv("KYTY_DIRECT_MEMORY_MB");
@@ -693,7 +706,8 @@ public:
                         if (mb > 13824) mb = 13824;
                         return mb * 1024 * 1024;
                 }();
-                return size;
+                const uint64_t effective = g_effective_direct_memory_size.load(std::memory_order_relaxed);
+                return effective != 0 ? effective : size;
         }
 #else
         static constexpr uint64_t TotalSize() { return static_cast<uint64_t>(13824) * 1024 * 1024; }

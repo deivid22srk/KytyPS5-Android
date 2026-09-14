@@ -672,7 +672,10 @@ void CreatePipelineInternal(
 
 	vk::PipelineViewportStateCreateInfo viewport_state {};
 	viewport_state.sType         = vk::StructureType::ePipelineViewportStateCreateInfo;
-	viewport_state.pNext         = &depth_clip_control;
+	// Without VK_EXT_depth_clip_control (some Turnip/Mali builds) the struct is omitted and
+	// Vulkan's default 0..1 depth range applies.
+	viewport_state.pNext         =
+	    graphics.depth_clip_control_ext_enabled ? &depth_clip_control : nullptr;
 	viewport_state.flags         = {};
 	viewport_state.viewportCount = 1;
 	viewport_state.pViewports    = &viewport;
@@ -698,13 +701,9 @@ void CreatePipelineInternal(
 
 	vk::PipelineRasterizationStateCreateInfo rasterizer {};
 	rasterizer.sType = vk::StructureType::ePipelineRasterizationStateCreateInfo;
-	// MoltenVK lacks VK_EXT_depth_clip_enable; omit the depth-clip struct on macOS and accept
-	// Vulkan's default depth clipping (enabled) instead of the PS5's clamp behavior.
-#if defined(__APPLE__)
-	rasterizer.pNext = nullptr;
-#else
-	rasterizer.pNext = &clip_ext;
-#endif
+	// Without VK_EXT_depth_clip_enable (MoltenVK, some Turnip builds) the struct is omitted
+	// and Vulkan's default depth clipping (enabled) applies instead of the PS5 clamp behavior.
+	rasterizer.pNext = graphics.depth_clip_enable_ext_enabled ? &clip_ext : nullptr;
 	rasterizer.flags                   = {};
 	rasterizer.depthClampEnable        = VK_FALSE;
 	rasterizer.rasterizerDiscardEnable = VK_FALSE;
@@ -782,13 +781,9 @@ void CreatePipelineInternal(
 
 	vk::PipelineColorBlendStateCreateInfo color_blending {};
 	color_blending.sType = vk::StructureType::ePipelineColorBlendStateCreateInfo;
-	// MoltenVK lacks VK_EXT_color_write_enable; drop the dynamic color-write struct on macOS
-	// and rely on each attachment's static colorWriteMask (all channels enabled by default).
-#if defined(__APPLE__)
-	color_blending.pNext = nullptr;
-#else
-	color_blending.pNext = &color_write;
-#endif
+	// Without VK_EXT_color_write_enable (MoltenVK, some Turnip builds) the dynamic
+	// color-write struct is dropped and each attachment's static colorWriteMask applies.
+	color_blending.pNext = graphics.color_write_enable_ext_enabled ? &color_write : nullptr;
 	color_blending.flags           = {};
 	color_blending.logicOpEnable   = VK_FALSE;
 	color_blending.logicOp         = vk::LogicOp::eCopy;
@@ -879,17 +874,17 @@ void CreatePipelineInternal(
 	    // Depth bounds change per draw in UE4 titles; baking them into the pipeline key created a
 	    // new pipeline every few draws. MoltenVK disables depth bounds testing entirely.
 	    vk::DynamicState::eDepthBounds,
-	    // Keep last so depth-only pipelines can omit this dynamic state.
-	    vk::DynamicState::eColorWriteEnableEXT, // unsupported by MoltenVK; static mask instead
 #endif
+	    // Keep last so depth-only pipelines (and drivers without
+	    // VK_EXT_color_write_enable, e.g. MoltenVK or some Turnip builds) can omit
+	    // this dynamic state.
+	    vk::DynamicState::eColorWriteEnableEXT,
 	};
 	auto dynamic_states_count =
 	    static_cast<uint32_t>(sizeof(dynamic_states) / sizeof(dynamic_states[0]));
-#if !defined(__APPLE__)
-	if (static_params.color_count == 0) {
+	if (static_params.color_count == 0 || !graphics.color_write_enable_ext_enabled) {
 		dynamic_states_count--;
 	}
-#endif
 
 	vk::PipelineDynamicStateCreateInfo dynamic_state {};
 	dynamic_state.sType             = vk::StructureType::ePipelineDynamicStateCreateInfo;

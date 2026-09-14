@@ -414,22 +414,22 @@ static void SetGraphicsDynamicParams(const CommandBuffer& buffer, vk::CommandBuf
 		                              depth.stencil_dynamic_back.reference);
 	}
 
-#if defined(__APPLE__)
-	// MoltenVK has no VK_EXT_color_write_enable; the pipeline is created without the
-	// eColorWriteEnableEXT dynamic state and relies on the static colorWriteMask instead.
-#else
-	vk::Bool32 enable[RENDER_COLOR_ATTACHMENTS_MAX] = {};
-	// Color-control operation selects special color-buffer paths, not the normal component write
-	// mask. Attachment availability therefore follows the target write mask.
-	for (uint32_t i = 0; i < color_count; i++) {
-		enable[i] = render_target_mask_slot(ctx.GetRenderTargetMask(), colors[i].target_slot) != 0
-		                ? VK_TRUE
-		                : VK_FALSE;
+	// Drivers without VK_EXT_color_write_enable (MoltenVK, some Turnip builds) create the
+	// pipeline without the eColorWriteEnableEXT dynamic state and rely on the static
+	// colorWriteMask instead.
+	if (buffer.GetGraphics().color_write_enable_ext_enabled) {
+		vk::Bool32 enable[RENDER_COLOR_ATTACHMENTS_MAX] = {};
+		// Color-control operation selects special color-buffer paths, not the normal component write
+		// mask. Attachment availability therefore follows the target write mask.
+		for (uint32_t i = 0; i < color_count; i++) {
+			enable[i] = render_target_mask_slot(ctx.GetRenderTargetMask(), colors[i].target_slot) != 0
+					? VK_TRUE
+					: VK_FALSE;
+		}
+		if (color_count != 0) {
+			vk_buffer.setColorWriteEnableEXT(color_count, enable);
+		}
 	}
-	if (color_count != 0) {
-		vk_buffer.setColorWriteEnableEXT(color_count, enable);
-	}
-#endif
 }
 
 static bool DrawHasValidVertexShader(const HW::Shader& sh_ctx) {

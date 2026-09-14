@@ -35,6 +35,13 @@ struct GraphicContext {
 	bool                               sample_rate_shading_enabled           = false;
 	bool                               graphics_pipeline_library_enabled      = false;
 	bool                               graphics_pipeline_library_fast_linking = false;
+	/* Mobile drivers (Turnip/Mali) may lack VK_EXT_depth_clip_control,
+	 * VK_EXT_depth_clip_enable and VK_EXT_color_write_enable. The renderer
+	 * queries these flags instead of assuming the extensions exist and falls
+	 * back the same way it does on MoltenVK (macOS). */
+	bool                               depth_clip_control_ext_enabled        = false;
+	bool                               depth_clip_enable_ext_enabled         = false;
+	bool                               color_write_enable_ext_enabled        = false;
 	uint32_t                           subgroup_size                         = 0;
 	uint32_t                           min_subgroup_size                     = 0;
 	uint32_t                           max_subgroup_size                     = 0;
