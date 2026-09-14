@@ -264,7 +264,39 @@ index 09adb74..43b8475 100644
  
  char* Path2Name(const char* path)
  {
-@@ -828,6 +836,35 @@ elfheader_t* GetElf(library_t* lib)
+@@ -261,9 +269,30 @@
+ 
++#if defined(ANDROID)
++/* bionic guests record DT_NEEDED without glibc's version suffix
++ * ("libc.so" instead of "libc.so.6"). Fall back to family matching
++ * so such a guest binds to the wrapped lib of the same family - the
++ * host's own bionic library - instead of failing the wrap and trying
++ * to emulate a glibc one (which needs real rtld state and crashes).
++ * Only consulted when the exact name comparison already failed. */
++static int IsSameLibFamily(const char* a, const char* b)
++{
++    const char* p = strstr(a, ".so");
++    size_t na = p ? (size_t)(p - a) : strlen(a);
++    p = strstr(b, ".so");
++    size_t nb = p ? (size_t)(p - b) : strlen(b);
++    return na == nb && !strncmp(a, b, na);
++}
++#endif
++
+ static void initWrappedLib(library_t *lib, box64context_t* context) {
+     int nb = (box64_is32bits?sizeof(wrappedlibs32):sizeof(wrappedlibs)) / sizeof(wrappedlib_t);
+     for (int i=0; i<nb; ++i) {
+         wrappedlib_t* w = box64_is32bits?(&wrappedlibs32[i]):(&wrappedlibs[i]);
+-        if(strcmp(lib->name, w->name)==0) {
++        if(strcmp(lib->name, w->name)==0
++        #if defined(ANDROID)
++            || IsSameLibFamily(lib->name, w->name)
++        #endif
++        ) {
+             int err = w->init(lib, context);
+             if (err) {
+                 if (err == -1) {
+@@ -828,6 +857,35 @@ elfheader_t* GetElf(library_t* lib)
      return lib->e.elf;
  }
  
@@ -300,7 +332,7 @@ index 09adb74..43b8475 100644
  static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uintptr_t *addr, uintptr_t *size, int* weak)
  {
      void* symbol;
-@@ -839,6 +876,10 @@ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uint
+@@ -839,6 +868,10 @@ static int getSymbolInDataMaps(library_t*lib, const char* name, int noweak, uint
          symbol = dlsym(lib->w.lib, kh_key(lib->w.datamap, k));
          if(!symbol)
              symbol = GetNativeSymbolUnversioned(lib->w.lib, kh_key(lib->w.datamap, k));

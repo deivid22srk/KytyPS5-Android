@@ -66,14 +66,15 @@ jobs:
         run: |
           test -x "$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" && echo "NDK toolchain OK"
 
-      - name: Build kyty_emulator (x86_64 + Android bridge)
+      - name: Build kyty_emulator (bionic x86_64 guest + Android bridge)
         run: |
           bash scripts/android-build-emulator.sh \
             "$GITHUB_WORKSPACE" \
             "$GITHUB_WORKSPACE/_Build/android-bridge" \
-            "$GITHUB_WORKSPACE/app/src/main/assets/kyty/bin/kyty_emulator"
+            "$GITHUB_WORKSPACE/app/src/main/assets/kyty/bin/kyty_emulator" \
+            "$ANDROID_HOME/ndk/${NDK_VERSION}"
 
-      - name: Build x86_64 rootfs (Debian runtime libraries)
+      - name: Build x86_64 rootfs (runtime skeleton, bionic guest)
         run: |
           bash scripts/android-make-rootfs.sh \
             "$GITHUB_WORKSPACE/app/src/main/assets/kyty/rootfs.tar"
@@ -130,8 +131,8 @@ jobs:
             echo
             echo "- commit: $(git rev-parse HEAD)"
             echo "- box64: ${BOX64_COMMIT} (ARM64 dynarec)"
-            echo "- kyty_emulator: x86_64 clang Release, Android bridge"
-            echo "- rootfs: Debian amd64 minimal"
+            echo "- kyty_emulator: x86_64-linux-android (bionic), NDK clang Release, Android bridge"
+            echo "- rootfs: runtime skeleton (guest libs are the device's bionic, box64-wrapped)"
           } > build-report.md
 
       - name: Upload build report

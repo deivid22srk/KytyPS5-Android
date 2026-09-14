@@ -38,6 +38,19 @@ option(KYTY_ENABLE_CLANG_TIDY "Run clang-tidy checks during builds" OFF)
 # of real SDL2, for running the x86_64 emulator under box64 on Android.
 option(KYTY_ANDROID_BRIDGE "Replace SDL2 with the Android host-bridge shim (box64 target)" OFF)
 
+if(KYTY_ANDROID_BRIDGE)
+        # The guest is built with the NDK's libc++, which (LLVM 18) still gates
+        # std::jthread / std::stop_token behind _LIBCPP_ENABLE_EXPERIMENTAL;
+        # glibc libstdc++ provides them unconditionally.
+        add_compile_definitions(_LIBCPP_ENABLE_EXPERIMENTAL)
+        # bionic's <pthread.h> leaks "PAGE_SIZE" as a macro (NDK <= 27); the
+        # emulator's own constexpr PAGE_SIZE constants (guest page tables,
+        # memory manager, GPU page tracker) then fail to parse. glibc never
+        # defined that macro, so nothing in this tree relies on it — opt out
+        # with bionic's official switch instead of editing every declaration.
+        add_compile_definitions(__BIONIC_NO_PAGE_SIZE_MACRO)
+endif()
+
 set(KYTY_BUILD_ORIGIN "Source" CACHE STRING "Build provenance shown in diagnostics")
 set_property(CACHE KYTY_BUILD_ORIGIN PROPERTY STRINGS Source Official Fork)
 if(NOT KYTY_BUILD_ORIGIN STREQUAL "Source" AND NOT KYTY_BUILD_ORIGIN STREQUAL "Official" AND
@@ -325,6 +338,11 @@ if(KYTY_ANDROID_BRIDGE)
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/android/bridge/sdl2_shim"
                 "${CMAKE_CURRENT_BINARY_DIR}/android/bridge/sdl2_shim")
         list(APPEND kyty_emulator_link_libraries sdl2-android-shim)
+        # bionic x86_64 guest (box64 target): custom _start (no crt/__libc_init)
+        # and glibc-name compat shims for prebuilt third-party archives.
+        list(APPEND kyty_emulator_src
+                "${CMAKE_CURRENT_SOURCE_DIR}/android/guest/guest_entry.c"
+                "${CMAKE_CURRENT_SOURCE_DIR}/android/guest/glibc_compat.cpp")
 else()
         list(APPEND kyty_emulator_link_libraries SDL2-static)
 endif()
@@ -636,8 +654,15 @@ endif()
 if (KYTY_CLANG_CL)
         target_link_libraries(kyty_emulator onecore)
 endif()
-if (CLANG AND NOT KYTY_CLANG_CL)
+if (CLANG AND NOT KYTY_CLANG_CL AND NOT KYTY_ANDROID_BRIDGE)
         target_link_libraries(kyty_emulator pthread)
+endif()
+if (KYTY_ANDROID_BRIDGE)
+        # bionic x86_64 guest: custom _start replaces crtbegin (which would call
+        # __libc_init and re-initialize libc inside the box64 host process), and
+        # libc++ is linked statically so the only DT_NEEDED entries are the
+        # bionic system libraries that box64 wraps against the host process.
+        target_link_options(kyty_emulator PRIVATE -nostartfiles -static-libstdc++)
 endif()
 # dlopen/dlsym/dladdr for RenderDoc.
 target_link_libraries(kyty_emulator ${CMAKE_DL_LIBS})

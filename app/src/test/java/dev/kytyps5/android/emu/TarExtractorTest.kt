@@ -158,16 +158,13 @@ class TarExtractorTest {
         assumeTrue("rootfs.tar not built — skipping", assetTar.isFile)
         val out = tmp.newFolder("rootfs-out")
         TarExtractor.extract(assetTar.inputStream().buffered(), out, assetTar.length()) { }
-        // the loader chain the emulator launch depends on
-        assertTrue(
-            "dynamic loader missing",
-            File(out, "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2").exists() ||
-                File(out, "lib64/ld-linux-x86-64.so.2").exists(),
-        )
-        assertTrue("libc.so.6 missing", File(out, "usr/lib/x86_64-linux-gnu/libc.so.6").isFile)
-        assertTrue("libstdc++.so.6 missing", File(out, "usr/lib/x86_64-linux-gnu/libstdc++.so.6").exists())
-        val files = out.walkTopDown().filter { it.isFile }.count()
-        assertTrue("suspiciously few files extracted: $files", files >= 300)
+        // The bionic-guest runtime skeleton: the session's readiness check
+        // (EmulatorSession.runtimeReady) looks for the release markers. The
+        // guest's libraries are the device's own bionic — wrapped by box64
+        // in-process — so no glibc runtime ships inside the APK anymore.
+        assertTrue("release marker missing", File(out, "etc/kyty-release").isFile)
+        assertTrue("release text missing", File(out, "etc/kyty-release.txt").isFile)
+        assertEquals("kyty-android-bionic", File(out, "etc/kyty-release").readText().trim())
     }
 
     @Test

@@ -90,20 +90,17 @@ class EmulatorSession(private val context: Context) {
     val bridgeShm: File
         get() = File(kytyRoot, "bridge.shm")
 
-    /** Real runtime readiness — all three components verified. The Debian
-     *  rootfs is usr-merged: the loader lives under usr/lib (usr/lib64 is a
-     *  symlink); keep the non-merged paths as legacy fallbacks. */
+    /** Real runtime readiness — all components verified. The guest is a
+     *  bionic x86_64 binary: its libraries are the device's own (wrapped
+     *  by box64 in-process), so readiness is the emulator + box64 + the
+     *  extracted runtime skeleton. */
     fun runtimeReady(): Boolean =
-        emulatorBinary.exists() && box64Ready() && loaderFile() != null
+        emulatorBinary.exists() && box64Ready() && runtimeMarker() != null
 
-    /** The dynamic loader file, resolved inside the extracted rootfs. */
-    private fun loaderFile(): File? =
-        listOf(
-            "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2", /* Debian trixie (usr-merged) */
-            "usr/lib64/ld-linux-x86-64.so.2",                  /* symlink into usr/lib */
-            "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",       /* legacy layouts */
-            "lib64/ld-linux-x86-64.so.2",
-        ).asSequence().map { File(rootfsDir, it) }.firstOrNull { it.exists() }
+    /** The runtime skeleton marker, resolved inside the extracted rootfs. */
+    private fun runtimeMarker(): File? =
+        File(rootfsDir, "etc/kyty-release").takeIf { it.exists() }
+            ?: File(rootfsDir, "etc/kyty-release.txt").takeIf { it.exists() }
 
     fun runtimeReport(): String {
         val lines = mutableListOf<String>()
@@ -117,10 +114,10 @@ class EmulatorSession(private val context: Context) {
             box64Binary.exists() -> "box64: ok (${box64Binary.length() / (1024 * 1024)} MB)"
             else -> "box64: AUSENTE"
         })
-        lines.add(if (loaderFile() != null) {
-            "rootfs x86_64: ok (${rootfsDir.walkTopDown().filter { it.isFile }.sumOf { it.length() } / (1024 * 1024)} MB)"
+        lines.add(if (runtimeMarker() != null) {
+            "rootfs (bionic guest): ok (${rootfsDir.walkTopDown().filter { it.isFile }.sumOf { it.length() } / 1024} KB)"
         } else {
-            "rootfs x86_64: AUSENTE"
+            "rootfs (bionic guest): AUSENTE"
         })
         return lines.joinToString("\n")
     }
@@ -162,12 +159,12 @@ class EmulatorSession(private val context: Context) {
             env.add(arrayOf(k, v))
         }
 
-        // box64 runtime discovery
-        put("BOX64_PATH", "${kytyRoot}/bin:${rootfsDir}/usr/bin:${rootfsDir}/bin")
-        put("BOX64_LD_LIBRARY_PATH",
-            "${rootfsDir}/usr/lib/x86_64-linux-gnu:${rootfsDir}/lib/x86_64-linux-gnu:" +
-                "${rootfsDir}/lib64:${rootfsDir}/lib:${rootfsDir}/usr/lib")
-        put("BOX64_EMULATED_LIBS", "libvulkan.so.1") // force the wrapped Vulkan
+        // box64 runtime discovery: the guest needs no library path — it is a
+        // bionic binary whose DT_NEEDED are the device's own system libs.
+        // libvulkan is NOT pre-declared emulated: the shim dlopens
+        // "libvulkan.so.1", which box64 binds to its wrapped vulkan (on
+        // Android the wrapper itself dlopens the host's "libvulkan.so").
+        put("BOX64_PATH", "${kytyRoot}/bin")
         // box64 crash black-box: when stdout is not a tty (our log-file
         // redirect) box64's default log level is NONE, which also silences
         // its own SIGSEGV report (guest RIP, fault address, si_code, regs).
@@ -183,7 +180,7 @@ class EmulatorSession(private val context: Context) {
         // misc unix env
         put("HOME", "${kytyRoot}/data")
         put("TMPDIR", "${kytyRoot}/data/tmp")
-        put("PATH", "${rootfsDir}/usr/bin:${rootfsDir}/bin:/system/bin")
+        put("PATH", "/system/bin")
         put("LANG", "C.UTF-8")
         put("LC_ALL", "C.UTF-8")
 

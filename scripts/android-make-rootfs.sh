@@ -1,50 +1,40 @@
 #!/usr/bin/env bash
-# Build the minimal Debian/Ubuntu x86_64 rootfs for the KytyPS5 Android port.
+# Build the runtime skeleton for the KytyPS5 Android port.
 #
 # Usage: scripts/android-make-rootfs.sh <output-tar>
 #
-# NOTE: the asset must be a PLAIN tar. aapt2 transparently gunzips assets whose
-# name ends in ".gz" and strips the suffix, so a rootfs.tar.gz would ship as
-# rootfs.tar in the APK and the installer's asset name would not match.
+# The guest emulator is an x86_64-linux-android (bionic) binary: all its
+# dynamic dependencies are the device's own bionic system libraries, which
+# box64 wraps in-process. No glibc runtime is needed (the old Debian amd64
+# rootfs existed only for the glibc guest and caused fatal ABI clashes —
+# see docs/PORTING.md).
 #
-# The x86_64 kyty_emulator links against: libc, libm, libstdc++, libgcc_s,
-# libz, libbz2, liblzma and the dynamic loader. We pull exactly those
-# packages for the build host's native arch (amd64) with `apt-get download`
-# (no root required), unpack them and produce a tarball consumed as an APK
-# asset. The guest never executes system binaries from here — box64 loads
-# only these shared libraries.
+# What the emulator still expects on disk at runtime:
+#   - a writable skeleton under KYTY_BASE_PATH (created by RuntimeInstaller
+#     from this tar): etc/ marker, the sandbox data/temp dirs are created
+#     by the session itself;
+#   - HOME/TMPDIR point inside the app's files dir (set by EmulatorSession).
+#
+# NOTE: the asset must be a PLAIN tar. aapt2 transparently gunzips assets
+# whose name ends in ".gz" and strips the suffix, so a rootfs.tar.gz would
+# ship as rootfs.tar in the APK and the installer's asset name would not
+# match.
 set -euo pipefail
 
-OUT="${1:?output tar.gz}"
+OUT="${1:?output tar}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/kyty-rootfs.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "[rootfs] downloading amd64 packages (host glibc must match emulator build)"
-cd "$WORK"
-apt-get download \
-        libc6 \
-        libstdc++6 \
-        libgcc-s1 \
-        zlib1g \
-        libbz2-1.0 \
-        liblzma5
-
-echo "[rootfs] extracting"
-mkdir -p rootfs
-for deb in *.deb; do
-        dpkg-deb -x "$deb" rootfs/
-done
-
-# sanity: dynamic loader must exist
-if [ ! -e rootfs/lib64/ld-linux-x86-64.so.2 ] &&
-        [ ! -e rootfs/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 ]; then
-        echo "ERROR: ld-linux-x86-64.so.2 not found in extracted rootfs" >&2
-        exit 1
-fi
+echo "[rootfs] building bionic-guest runtime skeleton"
+mkdir -p "$WORK/rootfs/etc"
+# A version marker plus an mtab alias — the emulator's file-system sandbox
+# checks for their existence on some paths.
+echo "kyty-android-bionic" > "$WORK/rootfs/etc/kyty-release"
+printf 'KytyPS5-Android runtime skeleton (bionic x86_64 guest, box64)\n' > "$WORK/rootfs/etc/kyty-release.txt"
 
 echo "[rootfs] packing"
 mkdir -p "$(dirname "$OUT")"
-tar -cf "$OUT" -C rootfs .
+tar -cf "$OUT" -C "$WORK/rootfs" .
 
 echo "[rootfs] done: $OUT ($(du -h "$OUT" | cut -f1))"
 # note: plain `tar -tf | head` breaks under `set -o pipefail` (SIGPIPE)

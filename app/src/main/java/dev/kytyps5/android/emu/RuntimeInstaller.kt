@@ -10,9 +10,11 @@ import java.io.InputStream
  * Installs the x86_64 emulator runtime from APK assets into app storage.
  *
  * The APK bundles:
- *   assets/kyty/bin/kyty_emulator          — x86_64 Linux ELF (runs under box64)
- *   assets/kyty/rootfs.tar                 — minimal Debian x86_64 sysroot (GNU tar,
- *                                           uncompressed — aapt2 strips/gunzips
+ *   assets/kyty/bin/kyty_emulator          — x86_64-linux-android (bionic) ELF
+ *                                           (runs under box64; its DT_NEEDED are
+ *                                           the device's own system libraries)
+ *   assets/kyty/rootfs.tar                 — runtime skeleton, plain GNU tar
+ *                                           (uncompressed — aapt2 strips/gunzips
  *                                           ".gz" assets, so the name must match)
  *   assets/kyty/runtime_version.txt        — version marker
  * box64 ships as jniLibs/arm64-v8a/libbox64.so and is reachable through the
