@@ -490,11 +490,11 @@ bool HostStart(const std::string &workdir, const std::vector<std::string> &args,
                 setenv(kv.first.c_str(), kv.second.c_str(), 1);
         }
         {
-                const char *rootfs = getenv("BOX64_ROOTFS");
                 const char *ldpath = getenv("BOX64_LD_LIBRARY_PATH");
-                ALOGI("box64 env: BOX64_ROOTFS=%s LD_PATH=%s argv1=%s",
-                      rootfs != nullptr ? rootfs : "(unset)",
+                const char *emulibs = getenv("BOX64_EMULATED_LIBS");
+                ALOGI("box64 env: BOX64_LD_LIBRARY_PATH=%s BOX64_EMULATED_LIBS=%s argv1=%s",
                       ldpath != nullptr ? ldpath : "(unset)",
+                      emulibs != nullptr ? emulibs : "(unset)",
                       args[0].c_str());
         }
 

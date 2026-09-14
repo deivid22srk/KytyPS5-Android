@@ -20,9 +20,9 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * Owns one emulation session: launches the box64 process with the x86_64
- * emulator, streams its real stdout/stderr, tracks the real exit code and
- * forwards rumble to the phone/controller haptics.
+ * Owns one emulation session: starts the in-process box64 session with the
+ * x86_64 emulator, tails its redirected stdout/stderr log, tracks the
+ * bridged exit code and forwards rumble to the phone/controller haptics.
  *
  * The callback object is referenced from JNI (kyty_host_bridge.cpp).
  */
@@ -152,7 +152,10 @@ class EmulatorSession(private val context: Context) {
             _toast.value = "Reinicie o app para jogar novamente (limite do modo box64)"
             return false
         }
-        // Pre-flight: fail with a clear message instead of a native crash.
+        // Pre-flight: misconfigured installs fail here with a clear message.
+        // (A hard guest SIGSEGV later is in-process and takes the app down;
+        // that path is diagnosed via logs/emulator.log + crashDiagnostics,
+        // not via toast.)
         if (!emulatorBinary.exists()) {
             android.util.Log.e("KytySession", "missing emulator binary: ${emulatorBinary.absolutePath}")
             _toast.value = "Emulador ausente — reinstale o runtime"
@@ -170,7 +173,9 @@ class EmulatorSession(private val context: Context) {
             _toast.value = "Jogo inválido — eboot.bin não encontrado"
             return false
         }
-        if (!box64Ready() && !probeBox64()) {
+        // Real dlopen probe (cached): file presence alone does not prove
+        // the library loads in this process.
+        if (!probeBox64()) {
             android.util.Log.e("KytySession", "libbox64.so not loadable")
             _toast.value = "Box64 indisponível neste aparelho"
             return false
@@ -183,47 +188,8 @@ class EmulatorSession(private val context: Context) {
         argv.add(emulatorBinary.absolutePath)
         argv.addAll(emuArgs)
 
-        val env = mutableListOf<Array<String>>()
-        fun put(k: String, v: String) {
-            env.add(arrayOf(k, v))
-        }
-
-        // box64 runtime discovery
-        // BOX64_ROOTFS is mandatory: without it box64 resolves the guest
-        // loader/libraries against the Android host root (bionic) instead
-        // of the Debian sysroot and the session dies in early init.
-        put("BOX64_ROOTFS", rootfsDir.absolutePath)
-        put("BOX64_PATH", "${kytyRoot}/bin:${rootfsDir}/usr/bin:${rootfsDir}/bin")
-        put("BOX64_LD_LIBRARY_PATH",
-            "${rootfsDir}/usr/lib/x86_64-linux-gnu:${rootfsDir}/lib/x86_64-linux-gnu:" +
-                "${rootfsDir}/lib64:${rootfsDir}/lib:${rootfsDir}/usr/lib")
-        // Guest links against libvulkan.so.1 while the Android build of
-        // box64 names the wrapped module libvulkan.so: list both so the
-        // wrapper matches regardless of which SONAME the ELF requests.
-        put("BOX64_EMULATED_LIBS", "libvulkan.so.1,libvulkan.so")
-        // box64 crash black-box: when stdout is not a tty (our log-file
-        // redirect) box64's default log level is NONE, which also silences
-        // its own SIGSEGV report (guest RIP, fault address, si_code, regs).
-        // Force the report, a native backtrace and a rolling log buffer so
-        // any guest crash leaves a full diagnostic in emulator.log.
-        put("BOX64_SHOWSEGV", "1")
-        put("BOX64_SHOWBT", "1")
-        put("BOX64_ROLLING_LOG", "512")
-        put("BOX64_LOG", "1") // INFO: library load + symbol binding trace
-        // bridge
-        put("KYTY_BRIDGE_SHM", bridgeShm.absolutePath)
-        // Directory of the emulator binary (SDL_GetBasePath fallback).
-        // NOTE: File(parent, "/") would resolve to "/" on Unix (absolute
-        // child drops the parent), so use the parent path directly.
-        put("KYTY_BASE_PATH", emulatorBinary.parentFile!!.absolutePath)
-        // misc unix env
-        put("HOME", "${kytyRoot}/data")
-        put("TMPDIR", "${kytyRoot}/data/tmp")
-        put("PATH", "${rootfsDir}/usr/bin:${rootfsDir}/bin:/system/bin")
-        put("LANG", "C.UTF-8")
-        put("LC_ALL", "C.UTF-8")
-
-        settings.toBox64Env().forEach { (k, v) -> put(k, v) }
+        val env = SessionEnv.build(kytyRoot, rootfsDir, emulatorBinary, bridgeShm, settings)
+            .map { (k, v) -> arrayOf(k, v) }
 
         _exitCode.value = null
         _logs.value = ""

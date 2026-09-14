@@ -104,8 +104,10 @@ Key components:
   `nativeLibraryDir` (uncompressed, `useLegacyPackaging=false`).
 - **Runtime rootfs** — minimal Debian amd64 set (libc6, libstdc++6,
   libgcc-s1, zlib1g, libbz2-1.0, liblzma5) shipped as an APK asset and
-  extracted on first run; the emulator's dynamic loader and libraries come
-  from it via `BOX64_LD_LIBRARY_PATH`.
+  extracted on first run; box64 finds the guest libraries through
+  `BOX64_LD_LIBRARY_PATH` pointing into it (upstream box64 has no chroot
+  variable — library search is purely path-based), and
+  `BOX64_EMULATED_LIBS` forces the wrapped Vulkan module.
 
 ## 4. What is real
 

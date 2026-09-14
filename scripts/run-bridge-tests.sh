@@ -10,6 +10,9 @@ ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/kyty-bridge-test.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
 
+# NOTE: -DSDL_MAIN_HANDLED is host-test only (some SDL builds rename
+# main->SDL_main, which breaks the test link); the guest shim itself
+# compiles without this flag.
 g++ -std=c++20 -O1 -g \
 	-DSDL_MAIN_HANDLED \
 	-I "$ROOT/3rdparty/SDL2/include" \
