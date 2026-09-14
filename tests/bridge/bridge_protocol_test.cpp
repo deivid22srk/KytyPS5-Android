@@ -26,12 +26,21 @@
 #include <fcntl.h>
 #include <cstdlib>
 
-static const char *kShmPath = "/tmp/kyty-bridge-test.shm";
+static char g_shm_path[512];
+
+static const char *ShmPath() {
+        const char *tmp = getenv("TMPDIR");
+        if (tmp == nullptr || tmp[0] == '\0') {
+                tmp = "/tmp";
+        }
+        snprintf(g_shm_path, sizeof(g_shm_path), "%s/kyty-bridge-test.shm", tmp);
+        return g_shm_path;
+}
 
 static KytyBridgeShm *g_host = nullptr; /* host-side mapping */
 
 static void HostWrite() {
-        int fd = open(kShmPath, O_RDWR | O_CREAT | O_TRUNC, 0644);
+        int fd = open(ShmPath(), O_RDWR | O_CREAT | O_TRUNC, 0644);
         assert(fd >= 0);
         assert(ftruncate(fd, (off_t)sizeof(KytyBridgeShm)) == 0);
         void *mem = mmap(nullptr, sizeof(KytyBridgeShm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -58,7 +67,7 @@ static void HostWrite() {
         pad->connected = 1;
         snprintf(pad->name, sizeof(pad->name), "Test Pad");
 
-        setenv("KYTY_BRIDGE_SHM", kShmPath, 1);
+        setenv("KYTY_BRIDGE_SHM", ShmPath(), 1);
 }
 
 static void HostPushEvent(const KytyBridgeEvent &ev) {

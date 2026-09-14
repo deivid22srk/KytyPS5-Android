@@ -11,6 +11,7 @@ OUT="$(mktemp -d "${TMPDIR:-/tmp}/kyty-bridge-test.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
 
 g++ -std=c++20 -O1 -g \
+	-DSDL_MAIN_HANDLED \
 	-I "$ROOT/3rdparty/SDL2/include" \
 	-I "$ROOT/3rdparty/Vulkan-Headers/include" \
 	-I "$ROOT/android/bridge" \

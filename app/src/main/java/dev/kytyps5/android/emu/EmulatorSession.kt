@@ -140,13 +140,39 @@ class EmulatorSession(private val context: Context) {
     /** Launches the game with the given settings. Returns false when the launch failed. */
     fun start(game: GameInfo, settings: EmuSettings): Boolean {
         if (!ensureInit()) {
+            _toast.value = "Falha ao inicializar o host (bridge.shm)"
             return false
         }
         if (NativeBridge.isRunning()) {
+            _toast.value = "Uma sessão já está em execução"
             return false
         }
         if (sessionUsed) {
             // box64 library mode is single-session per process by design
+            _toast.value = "Reinicie o app para jogar novamente (limite do modo box64)"
+            return false
+        }
+        // Pre-flight: fail with a clear message instead of a native crash.
+        if (!emulatorBinary.exists()) {
+            android.util.Log.e("KytySession", "missing emulator binary: ${emulatorBinary.absolutePath}")
+            _toast.value = "Emulador ausente — reinstale o runtime"
+            return false
+        }
+        val loader = loaderFile()
+        if (loader == null) {
+            android.util.Log.e("KytySession", "missing rootfs loader under: ${rootfsDir.absolutePath}")
+            _toast.value = "Rootfs x86-64 ausente ou corrompido — reinstale o runtime"
+            return false
+        }
+        val eboot = File(game.installDir, "eboot.bin")
+        if (!eboot.exists()) {
+            android.util.Log.e("KytySession", "missing eboot.bin in: ${game.installDir.absolutePath}")
+            _toast.value = "Jogo inválido — eboot.bin não encontrado"
+            return false
+        }
+        if (!box64Ready() && !probeBox64()) {
+            android.util.Log.e("KytySession", "libbox64.so not loadable")
+            _toast.value = "Box64 indisponível neste aparelho"
             return false
         }
 
@@ -163,11 +189,18 @@ class EmulatorSession(private val context: Context) {
         }
 
         // box64 runtime discovery
+        // BOX64_ROOTFS is mandatory: without it box64 resolves the guest
+        // loader/libraries against the Android host root (bionic) instead
+        // of the Debian sysroot and the session dies in early init.
+        put("BOX64_ROOTFS", rootfsDir.absolutePath)
         put("BOX64_PATH", "${kytyRoot}/bin:${rootfsDir}/usr/bin:${rootfsDir}/bin")
         put("BOX64_LD_LIBRARY_PATH",
             "${rootfsDir}/usr/lib/x86_64-linux-gnu:${rootfsDir}/lib/x86_64-linux-gnu:" +
                 "${rootfsDir}/lib64:${rootfsDir}/lib:${rootfsDir}/usr/lib")
-        put("BOX64_EMULATED_LIBS", "libvulkan.so.1") // force the wrapped Vulkan
+        // Guest links against libvulkan.so.1 while the Android build of
+        // box64 names the wrapped module libvulkan.so: list both so the
+        // wrapper matches regardless of which SONAME the ELF requests.
+        put("BOX64_EMULATED_LIBS", "libvulkan.so.1,libvulkan.so")
         // box64 crash black-box: when stdout is not a tty (our log-file
         // redirect) box64's default log level is NONE, which also silences
         // its own SIGSEGV report (guest RIP, fault address, si_code, regs).
@@ -179,7 +212,10 @@ class EmulatorSession(private val context: Context) {
         put("BOX64_LOG", "1") // INFO: library load + symbol binding trace
         // bridge
         put("KYTY_BRIDGE_SHM", bridgeShm.absolutePath)
-        put("KYTY_BASE_PATH", File(emulatorBinary.parentFile, "/").absolutePath)
+        // Directory of the emulator binary (SDL_GetBasePath fallback).
+        // NOTE: File(parent, "/") would resolve to "/" on Unix (absolute
+        // child drops the parent), so use the parent path directly.
+        put("KYTY_BASE_PATH", emulatorBinary.parentFile!!.absolutePath)
         // misc unix env
         put("HOME", "${kytyRoot}/data")
         put("TMPDIR", "${kytyRoot}/data/tmp")
@@ -193,6 +229,10 @@ class EmulatorSession(private val context: Context) {
         _logs.value = ""
         _running.value = true
 
+        android.util.Log.i("KytySession",
+            "start: emu=${emulatorBinary.absolutePath} rootfs=${rootfsDir.absolutePath} " +
+                "loader=${loader.absolutePath} game=${game.installDir.absolutePath} " +
+                "abi=${android.os.Build.SUPPORTED_ABIS.joinToString()}")
         val ok = NativeBridge.start(argv.toTypedArray(), env.toTypedArray())
         if (!ok) {
             _running.value = false

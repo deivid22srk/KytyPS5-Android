@@ -3,8 +3,8 @@
  *
  * This header defines the neutral binary protocol spoken between:
  *   - the ARM64 host library (android/host), which owns the ANativeWindow,
- *     the audio output (AAudio), the input sources and the box64 child
- *     process, and
+ *     the audio output (AAudio), the input sources and the in-process
+ *     box64 session, and
  *   - the SDL2 compatibility shim (android/bridge/sdl2_shim) that is linked
  *     into the x86_64 kyty_emulator build and runs under box64 translation.
  *

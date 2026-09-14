@@ -32,7 +32,7 @@ by Winlator (box64 + Wine for running x86 Windows games on Android).
 | Whole-process translation | Designed for it (runs ELF x86_64 end-to-end, `exec()` from an ARM64 parent) | Designed for it, but Android deployments are unproven at scale |
 | Vulkan pass-through | Ships a maintained `wrappedvulkan` that forwards x86_64 Vulkan calls to the host ARM64 loader — **required** for the emulator's Vulkan 1.3 renderer | No equivalent Android-proven Vulkan wrapper |
 | Dynarec quality on ARM64 | Mature ARM64 dynarec (big-block, strongmem, safe flags options) tuned over years on Adreno/Mali-class hardware | Excellent dynarec, but the Android integration cost dominates |
-| Process model on Android | Runs as a normal app child process via `fork`/`execv` from JNI — no root, no ptrace | Rootfs/ptrace-centric setup is hostile to the Android app sandbox |
+| Process model on Android | Runs in-process: the host dlopen()s `libbox64.so` and calls `box64_main()` on a dedicated pthread — no root, no ptrace, `ANativeWindow*` stays valid | Rootfs/ptrace-centric setup is hostile to the Android app sandbox |
 | Footprint | ~20 MB stripped shared-object build | Larger setup surface (rootfs + config generation steps) |
 
 **Decision: box64.** The decisive factors are (a) the Android/bionic build
@@ -91,9 +91,11 @@ Key components:
 - **`app/src/main/cpp/`** (`libkytyhost.so`, ARM64) — owns the real Android
   resources: `ANativeWindow` (from the Compose-embedded `SurfaceView`),
   AAudio output streams (one per guest audio device, data-callback driven),
-  the box64 child process (real `fork`/`execv`, stdout/stderr streamed to
-  the UI, real exit code via `waitpid`), vibrator haptics for rumble, and
-  Vulkan physical-device enumeration for the settings screen.
+  the in-process box64 session (`box64_main()` on a 64 MB pthread, guest
+  stdout/stderr redirected to `logs/emulator.log` and tailed by the UI,
+  guest `exit()` bridged back via `longjmp` with the real exit code),
+  vibrator haptics for rumble, and Vulkan physical-device enumeration for
+  the settings screen.
 - **box64** — built from the pinned upstream commit plus
   `android/box64-patches/android-build.patch` (bionic `fseeko64` aliases;
   Android Vulkan library name; a shared-library build with `box64_main()`;
@@ -115,11 +117,11 @@ Every user-visible feature maps to a real mechanism:
 | Import game | SAF document-tree copy into app storage; rejects folders without `eboot.bin` |
 | Settings | 1:1 mapping to `kyty_emulator` CLI flags and `BOX64_*` environment variables |
 | GPU device list | live `vkEnumeratePhysicalDevices` on the phone |
-| Play | `fork`/`execv` box64 with the real argv/env; ANativeWindow published to the guest |
+| Play | in-process `box64_main()` with the real argv/env (`BOX64_ROOTFS` → Debian sysroot); ANativeWindow published to the guest |
 | Virtual DualSense | a real bridge pad, same code path as physical controllers |
 | Physical gamepads | `InputDevice` → bridge pads (axes, buttons, triggers, dpad) |
-| Logs overlay | live stdout/stderr of the child process |
-| Exit | `SDL_QUIT` + `SIGTERM`; exit code surfaced from `waitpid` |
+| Logs overlay | live tail of `logs/emulator.log` (guest stdout/stderr redirect) |
+| Exit | `SDL_QUIT` + bridged guest `exit()`; exit code surfaced via callback |
 | Rumble | rumble ring → `VibratorManager` |
 
 ## 5. Known limits (honest engineering statement)
