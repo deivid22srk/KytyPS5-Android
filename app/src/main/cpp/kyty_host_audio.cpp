@@ -97,7 +97,11 @@ static void HostAudioThread(int shm_slot) {
         if (res != AAUDIO_OK || builder == nullptr) {
                 ALOGE("AAudio_createStreamBuilder failed");
                 delete cb_data;
-                __atomic_store_n(&slot->state, 0u, __ATOMIC_RELEASE);
+                /* park at 2 (device open on the guest side, dead on ours):
+                 * a 0 here would let a second SDL_OpenAudioDevice claim the
+                 * slot while the guest still holds it — the monitor recycles
+                 * parked slots once this thread is gone */
+                __atomic_store_n(&slot->state, 2u, __ATOMIC_RELEASE);
                 return;
         }
         AAudioStreamBuilder_setFormat(builder, KytyFormatToAAudio(fmt));
@@ -113,7 +117,9 @@ static void HostAudioThread(int shm_slot) {
         if (res != AAUDIO_OK || stream == nullptr) {
                 ALOGE("AAudio open failed: %s", AAudio_convertResultToText(res));
                 delete cb_data;
-                __atomic_store_n(&slot->state, 0u, __ATOMIC_RELEASE);
+                /* same parking rule: the guest believes the device is open;
+                 * the monitor will recycle the slot when this thread exits */
+                __atomic_store_n(&slot->state, 2u, __ATOMIC_RELEASE);
                 return;
         }
         {
@@ -177,6 +183,25 @@ void HostAudioMonitorMain() {
                         }
                 }
                 usleep(100000);
+
+                /* recycle parked slots: state==2 with no live host thread means
+                 * the owning thread already exited (AAudio open failure, or a
+                 * close whose thread finished between the guest's store and
+                 * our poll) — without this, such slots leak permanently and
+                 * four dead devices exhaust the table */
+                for (uint32_t i = 0; i < KYTY_BRIDGE_MAX_AUDIO_DEVS; ++i) {
+                        bool started = false;
+                        {
+                                std::lock_guard<std::mutex> lock(s.audio_mutex);
+                                started = s.audio[i].active.load();
+                        }
+                        KytyBridgeAudio *slot = &s.shm->audio[i];
+                        if (!started &&
+                            __atomic_load_n(&slot->state, __ATOMIC_ACQUIRE) == 2u) {
+                                __atomic_store_n(&slot->state, 0u, __ATOMIC_RELEASE);
+                                ALOGI("audio slot %u recycled", i);
+                        }
+                }
         }
 }
 

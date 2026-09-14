@@ -60,6 +60,7 @@
     <string name="guest_exited">Emulation ended (code %1$d)</string>
     <string name="not_running">Not running</string>
     <string name="runtime_bad">Runtime missing or corrupted</string>
+    <string name="session_start_failed">Failed to start the emulator session</string>
     <string name="session_restart_hint">Each run uses one box64 session inside the app process. To play again, restart the app.</string>
     <string name="restart_app">Restart app</string>
     <string name="back_to_library">Back to library</string>

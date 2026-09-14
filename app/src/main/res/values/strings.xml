@@ -60,6 +60,7 @@
     <string name="guest_exited">Emulação encerrada (código %1$d)</string>
     <string name="not_running">Não está em execução</string>
     <string name="runtime_bad">Runtime ausente ou corrompido</string>
+    <string name="session_start_failed">Falha ao iniciar a sessão do emulador</string>
     <string name="session_restart_hint">Cada execução usa uma sessão box64 dentro do processo do app. Para jogar novamente, reinicie o app.</string>
     <string name="restart_app">Reiniciar app</string>
     <string name="back_to_library">Voltar à biblioteca</string>

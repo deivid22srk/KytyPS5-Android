@@ -112,14 +112,17 @@ void HostSendFinger(int32_t finger, int32_t phase, float x, float y) {
         HostPushEvent(ev);
 }
 
+/* pads table serialization: connect/disconnect must not race on in_use
+ * (BT pad churn reconnects on the same slot) */
+static std::mutex g_pad_table_mutex;
+
 int HostPadConnect(uint32_t type, const std::string &name) {
         HostState &s = Host();
         if (s.shm == nullptr) {
                 return -1;
         }
-        static std::mutex instance_mutex;
-        std::lock_guard<std::mutex> lock(instance_mutex);
         static int next_instance = 1;
+        std::lock_guard<std::mutex> lock(g_pad_table_mutex);
         for (uint32_t i = 0; i < KYTY_BRIDGE_MAX_PADS; ++i) {
                 KytyBridgePad *pad = &s.shm->pads[i];
                 uint32_t expected = 0;
@@ -147,6 +150,10 @@ void HostPadDisconnect(int32_t instance) {
         if (s.shm == nullptr) {
                 return;
         }
+        /* same mutex as HostPadConnect: a disconnect racing a reconnect on
+         * the same slot could otherwise clear in_use on a freshly-claimed
+         * pad (BT pad churn does exactly this) */
+        std::lock_guard<std::mutex> lock(g_pad_table_mutex);
         for (uint32_t i = 0; i < KYTY_BRIDGE_MAX_PADS; ++i) {
                 KytyBridgePad *pad = &s.shm->pads[i];
                 if (pad->in_use != 0u && (int32_t)pad->instance_id == instance) {
@@ -552,6 +559,9 @@ void HostKill() {
         }
         s.running.store(false);
         s.exit_code.store(130); /* forced stop */
+        /* tearing down: monitor/rumble/audio threads observe this and exit;
+         * also makes the detach guard above meaningful on repeated calls */
+        s.shutdown.store(true);
         HostNotifyExit(130);
 }
 

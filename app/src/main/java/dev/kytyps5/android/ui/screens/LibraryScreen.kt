@@ -57,7 +57,9 @@ import dev.kytyps5.android.R
 import dev.kytyps5.android.Screen
 import dev.kytyps5.android.data.GameInfo
 import dev.kytyps5.android.emu.RuntimeInstaller
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -70,6 +72,7 @@ import org.json.JSONObject
 fun LibraryScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
     var games by remember { mutableStateOf(activity.repository.scan()) }
     var deleteTarget by remember { mutableStateOf<GameInfo?>(null) }
+    var deleting by remember { mutableStateOf(false) }
 
     // rescan when returning from import or emulation (off the UI thread:
     // size accounting walks every file of multi-GB game trees)
@@ -154,9 +157,18 @@ fun LibraryScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
             text = { Text(stringResource(R.string.delete_game_confirm)) },
             confirmButton = {
                 TextButton(onClick = {
-                    activity.deleteGame(game)
-                    games = activity.repository.scan()
-                    deleteTarget = null
+                    deleting = true
+                    /* multi-GB deleteRecursively + full rescan must stay off the
+                     * main thread — this onClick runs in the input dispatcher */
+                    CoroutineScope(Dispatchers.IO).launch {
+                        activity.deleteGame(game)
+                        val refreshed = activity.repository.scan()
+                        withContext(Dispatchers.Main) {
+                            games = refreshed
+                            deleting = false
+                            deleteTarget = null
+                        }
+                    }
                 }) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {

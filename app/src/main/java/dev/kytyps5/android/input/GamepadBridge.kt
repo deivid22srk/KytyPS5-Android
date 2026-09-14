@@ -59,11 +59,22 @@ class GamepadBridge {
 
     fun disconnect(deviceId: Int) {
         val pad = pads.remove(deviceId) ?: return
+        lastDpad.remove(pad.instanceId) // bounded map across pad churn
         NativeBridge.padDisconnect(pad.instanceId)
     }
 
     /** KeyEvent from the activity dispatch; returns true when consumed. */
     fun onKeyEvent(event: KeyEvent): Boolean {
+        // system keys must reach Android itself: BACK drives the Compose
+        // BackHandler (exit dialog / overlay dismissal) and the volume keys
+        // control phone volume — swallowing them here leaves the user
+        // trapped in the emulation screen
+        if (event.keyCode == KeyEvent.KEYCODE_BACK ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_MUTE) {
+            return false
+        }
         val dev = event.device ?: return false
         if (isGamepad(dev)) {
             val pad = pads[dev.id] ?: connect(dev.id) ?: return false

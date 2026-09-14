@@ -47,7 +47,9 @@ import dev.kytyps5.android.R
 import dev.kytyps5.android.Screen
 import dev.kytyps5.android.emu.NativeBridge
 import dev.kytyps5.android.settings.EmuSettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -69,7 +71,10 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
 
     LaunchedEffect(Unit) {
         try {
-            val arr = JSONArray(NativeBridge.enumerateVulkanDevices())
+            /* real vkCreateInstance + vkEnumeratePhysicalDevices — a dlopen-heavy
+             * first call; keep it off the main thread like the box64 probe */
+            val json = withContext(Dispatchers.IO) { NativeBridge.enumerateVulkanDevices() }
+            val arr = JSONArray(json)
             val list = mutableListOf<VulkanDevice>()
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
@@ -186,7 +191,8 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
             Text(stringResource(R.string.user_name), style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 value = s.userName,
-                onValueChange = { if (it.length <= 16) s = s.copy(userName = it) },
+                /* the guest validates BYTES (<=16, UTF-8), not UTF-16 chars */
+                onValueChange = { if (it.toByteArray(Charsets.UTF_8).size <= 16) s = s.copy(userName = it) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
@@ -194,7 +200,14 @@ fun SettingsScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
             Text(stringResource(R.string.user_id), style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 value = s.userId.toString(),
-                onValueChange = { text -> text.toIntOrNull()?.let { s = s.copy(userId = it) } },
+                /* the guest's IsConfiguredUserIdValid rejects negatives and
+                 * 0xfe/0xff; constrain at input time so a bad value cannot
+                 * reach launch and abort the emulator */
+                onValueChange = { text ->
+                    text.toLongOrNull()?.let { v ->
+                        if (v in 0..0xFD) s = s.copy(userId = v.toInt())
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

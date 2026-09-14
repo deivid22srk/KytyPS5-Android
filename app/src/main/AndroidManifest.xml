@@ -5,10 +5,11 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Vulkan rendering + game input -->
+    <!-- Vulkan rendering + game input (the port targets Vulkan 1.1: instance
+         creation and device enumeration both use VK_API_VERSION_1_1) -->
     <uses-feature android:name="android.hardware.vulkan.version"
         android:required="true"
-        android:version="0x403000" />
+        android:version="0x401000" />
     <uses-feature android:name="android.hardware.vulkan.level"
         android:required="false"
         android:version="1" />

@@ -96,10 +96,12 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
     val running by session.running.collectAsState()
     val exitCode by session.exitCode.collectAsState()
     val logs by session.logs.collectAsState()
+    val toast by session.toast.collectAsState()
     var showLogs by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
     var showTextInput by remember { mutableStateOf(false) }
     var started by remember { mutableStateOf(false) }
+    var startFailed by remember { mutableStateOf(false) }
     val virtualPad = remember { VirtualPadController() }
 
     // system back closes overlays instead of leaving the screen blind
@@ -127,7 +129,7 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
         if (!started) {
             started = true
             virtualPad.connect()
-            session.start(game, activity.settings)
+            startFailed = !session.start(game, activity.settings)
         }
     }
 
@@ -135,6 +137,20 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
         onDispose {
             virtualPad.disconnect()
         }
+    }
+
+    // full process restart: box64 library mode is single-session per process,
+    // so playing again (or recovering from a failed start) needs a fresh one
+    val restartApp: () -> Unit = {
+        val pm = activity.packageManager
+        val intent = pm.getLaunchIntentForPackage(activity.packageName)
+        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.finish()
+        if (intent != null) {
+            activity.startActivity(intent)
+        }
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -276,17 +292,19 @@ fun EmulationScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
             SessionEndOverlay(
                 code = exitCode ?: -1,
                 onBack = { onNavigate(Screen.Library) },
-                onRestart = {
-                    val pm = activity.packageManager
-                    val intent = pm.getLaunchIntentForPackage(activity.packageName)
-                    intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    activity.finish()
-                    if (intent != null) {
-                        activity.startActivity(intent)
-                    }
-                    android.os.Process.killProcess(android.os.Process.myPid())
-                },
+                onRestart = restartApp,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        // start failed (e.g. a second launch in one app instance — box64
+        // library mode is single-session): without this overlay the user
+        // would be stranded on a black 'not running' screen with no way out
+        if (startFailed && !showExitDialog) {
+            SessionStartFailedOverlay(
+                message = toast,
+                onBack = { onNavigate(Screen.Library) },
+                onRestart = restartApp,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -322,6 +340,47 @@ private fun SessionEndOverlay(code: Int, onBack: () -> Unit, onRestart: () -> Un
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White,
             )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                stringResource(R.string.session_restart_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFFB5E0C8),
+            )
+            Spacer(Modifier.height(24.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.material3.OutlinedButton(onClick = onBack) {
+                    Text(stringResource(R.string.back_to_library), color = Color.White)
+                }
+                androidx.compose.material3.Button(onClick = onRestart) {
+                    Text(stringResource(R.string.restart_app))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionStartFailedOverlay(message: String?, onBack: () -> Unit,
+                                        onRestart: () -> Unit, modifier: Modifier) {
+    Surface(color = Color(0xE6000000), modifier = modifier) {
+        Column(
+            Modifier.fillMaxSize().padding(32.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                stringResource(R.string.session_start_failed),
+                style = MaterialTheme.typography.titleLarge,
+                color = Color(0xFFFFB4AB),
+            )
+            if (!message.isNullOrEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Text(
                 stringResource(R.string.session_restart_hint),

@@ -78,7 +78,18 @@ class GameRepository(private val context: Context) {
         return null
     }
 
-    fun delete(game: GameInfo): Boolean = game.installDir.deleteRecursively()
+    fun delete(game: GameInfo): Boolean {
+        val inner = game.installDir.deleteRecursively()
+        /* nested layouts: the import shell dir (the SAF tree root) survives
+         * the inner game dir — remove it too when now empty */
+        val shell = game.installDir.parentFile
+        if (shell != null && shell.isDirectory &&
+            shell != gamesRoot && shell.listFiles()?.isEmpty() == true
+        ) {
+            shell.delete()
+        }
+        return inner
+    }
 
     /**
      * Imports a game tree from a SAF document uri. Returns the installed
@@ -103,10 +114,17 @@ class GameRepository(private val context: Context) {
 
         var files = 0
         var bytes = 0L
-        val found = copyDocumentTree(rootDocUri, target) { f, b ->
-            files = f
-            bytes = b
-            onProgress(f, b)
+        val found = try {
+            copyDocumentTree(rootDocUri, target) { f, b ->
+                files = f
+                bytes = b
+                onProgress(f, b)
+            }
+        } catch (e: Exception) {
+            /* provider died / grant revoked / storage full mid-copy: do not
+             * leave an invisible partial tree behind */
+            target.deleteRecursively()
+            return null
         }
         if (!found) {
             /* no eboot.bin -> not a game: do not leave a partial copy around */
