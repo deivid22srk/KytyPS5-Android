@@ -66,4 +66,13 @@
     <string name="back_to_library">Voltar à biblioteca</string>
     <string name="send_text_title">Enviar texto ao jogo</string>
     <string name="send">Enviar</string>
+    <string name="link_game">Adicionar sem copiar</string>
+    <string name="linking">Adicionando jogo…</string>
+    <string name="link_badge">Sem cópia</string>
+    <string name="link_needs_all_files_title">Acesso aos arquivos necessário</string>
+    <string name="link_needs_all_files_message">Para executar o jogo direto da pasta original (sem copiar para dentro do app), o Android exige que o app tenha acesso a todos os arquivos. Toque em “Conceder acesso”, ative a permissão nas configurações do sistema e volte ao app — a pasta escolhida será adicionada automaticamente.</string>
+    <string name="grant_access">Conceder acesso</string>
+    <string name="delete_linked_confirm">Remover este jogo da biblioteca? Os arquivos originais não serão alterados nem excluídos.</string>
+    <string name="link_unsupported">Não foi possível acessar esta pasta diretamente. Use “Importar jogo” (com cópia).</string>
+    <string name="link_missing">A pasta original deste jogo não está acessível (foi movida ou a permissão foi revogada).</string>
 </resources>

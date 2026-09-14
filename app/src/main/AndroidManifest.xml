@@ -5,6 +5,17 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Run-in-place games: the x86_64 emulator opens the ORIGINAL game
+         files with POSIX open() at their real shared-storage path. On
+         Android 11+ that requires "All files access" (user-granted in
+         system settings); older devices use the legacy read permission. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
     <!-- Vulkan rendering + game input (the port targets Vulkan 1.1: instance
          creation and device enumeration both use VK_API_VERSION_1_1) -->
     <uses-feature android:name="android.hardware.vulkan.version"

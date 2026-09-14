@@ -71,18 +71,20 @@ import org.json.JSONObject
 @Composable
 fun LibraryScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
     var games by remember { mutableStateOf(activity.repository.scan()) }
-    var deleteTarget by remember { mutableStateOf<GameInfo?>(null) }
+    var deleteTarget by mutableStateOf<GameInfo?>(null)
     var deleting by remember { mutableStateOf(false) }
 
-    // rescan when returning from import or emulation (off the UI thread:
+    // rescan when returning from import/link or emulation (off the UI thread:
     // size accounting walks every file of multi-GB game trees)
-    LaunchedEffect(activity.importStatus, activity.screen) {
+    LaunchedEffect(activity.importStatus, activity.screen, activity.needsAllFiles) {
         games = withContext(Dispatchers.IO) {
             activity.repository.scan()
         }
     }
 
-    val storageUsed = remember(games) { games.sumOf { it.sizeBytes } }
+    /* linked games run from the original folder: only copied ones occupy
+     * app storage, so the accounting reflects exactly that */
+    val storageUsed = remember(games) { games.filter { !it.linked }.sumOf { it.sizeBytes } }
     val total = activity.filesDir.totalSpace
 
     Scaffold(
@@ -112,6 +114,7 @@ fun LibraryScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                 EmptyLibrary(
                     Modifier.weight(1f),
                     onImport = { activity.pickGameFolder() },
+                    onLink = { activity.pickGameFolderNoCopy() },
                 )
             } else {
                 LazyVerticalGrid(
@@ -143,18 +146,49 @@ fun LibraryScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Button(onClick = { activity.pickGameFolder() }) {
+                OutlinedButton(onClick = { activity.pickGameFolder() }) {
                     Text(stringResource(R.string.import_game))
+                }
+                Button(onClick = { activity.pickGameFolderNoCopy() }) {
+                    Text(stringResource(R.string.link_game))
                 }
             }
         }
+    }
+
+    /* run-in-place import hit the scoped-storage wall: guide the user to the
+     * "All files access" toggle; the pending link completes automatically
+     * when they come back with the permission granted */
+    if (activity.needsAllFiles) {
+        AlertDialog(
+            onDismissRequest = { activity.clearNeedsAllFiles() },
+            title = { Text(stringResource(R.string.link_needs_all_files_title)) },
+            text = { Text(stringResource(R.string.link_needs_all_files_message)) },
+            confirmButton = {
+                TextButton(onClick = { activity.openAllFilesSettings() }) {
+                    Text(stringResource(R.string.grant_access))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { activity.clearNeedsAllFiles() }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 
     deleteTarget?.let { game ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text(stringResource(R.string.delete)) },
-            text = { Text(stringResource(R.string.delete_game_confirm)) },
+            text = {
+                Text(
+                    stringResource(
+                        if (game.linked) R.string.delete_linked_confirm
+                        else R.string.delete_game_confirm
+                    )
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     deleting = true
@@ -179,7 +213,7 @@ fun LibraryScreen(activity: MainActivity, onNavigate: (Screen) -> Unit) {
 }
 
 @Composable
-private fun EmptyLibrary(modifier: Modifier, onImport: () -> Unit) {
+private fun EmptyLibrary(modifier: Modifier, onImport: () -> Unit, onLink: () -> Unit) {
     Column(
         modifier = modifier.fillMaxWidth().padding(32.dp),
         verticalArrangement = Arrangement.Center,
@@ -197,6 +231,14 @@ private fun EmptyLibrary(modifier: Modifier, onImport: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onLink) {
+            Text(stringResource(R.string.link_game))
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onImport) {
+            Text(stringResource(R.string.import_game))
+        }
     }
 }
 
@@ -277,17 +319,32 @@ private fun GameCard(game: GameInfo, onPlay: () -> Unit, onDelete: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // informational label (not a button)
-                Surface(
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    Text(
-                        game.category.ifEmpty { "gd" },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
+                Row {
+                    Surface(
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Text(
+                            game.category.ifEmpty { "gd" },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                    if (game.linked) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                        ) {
+                            Text(
+                                stringResource(R.string.link_badge),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
                 }
                 Row {
                     IconButton(onClick = onDelete) {

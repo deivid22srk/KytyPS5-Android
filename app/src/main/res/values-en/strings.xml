@@ -66,4 +66,13 @@
     <string name="back_to_library">Back to library</string>
     <string name="send_text_title">Send text to the game</string>
     <string name="send">Send</string>
+    <string name="link_game">Add without copying</string>
+    <string name="linking">Adding game…</string>
+    <string name="link_badge">No copy</string>
+    <string name="link_needs_all_files_title">File access needed</string>
+    <string name="link_needs_all_files_message">To run the game straight from its original folder (without copying it into the app), Android requires the app to have access to all files. Tap “Grant access”, enable the permission in system settings and come back — the folder you picked will be added automatically.</string>
+    <string name="grant_access">Grant access</string>
+    <string name="delete_linked_confirm">Remove this game from the library? The original files will not be changed or deleted.</string>
+    <string name="link_unsupported">Could not access this folder directly. Use “Import game” (with copy) instead.</string>
+    <string name="link_missing">This game\'s original folder is not accessible (moved, or the permission was revoked).</string>
 </resources>
