@@ -21,7 +21,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <fcntl.h>
+#include <locale.h>
 
 extern "C" {
 
@@ -150,6 +152,30 @@ unsigned long long __isoc23_strtoull(const char *nptr, char **endptr, int base) 
 
 long long __isoc23_strtoll(const char *nptr, char **endptr, int base) {
     return strtoll(nptr, endptr, base);
+}
+
+/* glibc's GNU basename (bionic's <string.h> renames basename() to
+ * __gnu_basename; the host bionic libc only exports that name since API 35).
+ * GNU semantics: pure pointer arithmetic, the argument is never modified. */
+char* __gnu_basename(const char* path) {
+    const char* p = strrchr(path, '/');
+    return const_cast<char*>(p != nullptr ? p + 1 : path);
+}
+
+/* C99 long-double string conversions. bionic implements them, but a box64
+ * passthrough cannot forward an x87 80-bit return value from the ARM64 host
+ * (whose long double is 128-bit). Evaluate with the double-precision
+ * variants and widen here, in guest code, where the x87 ABI applies. */
+long double strtold(const char* nptr, char** endptr) {
+    return static_cast<long double>(strtod(nptr, endptr));
+}
+
+long double strtold_l(const char* nptr, char** endptr, locale_t loc) {
+    return static_cast<long double>(strtod_l(nptr, endptr, loc));
+}
+
+long double wcstold(const wchar_t* nptr, wchar_t** endptr) {
+    return static_cast<long double>(wcstod(nptr, endptr));
 }
 
 } /* extern "C" */

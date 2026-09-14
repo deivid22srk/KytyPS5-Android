@@ -26,6 +26,11 @@ echo "[box64] applying android patches"
 git -C "$WORK/box64" apply --verbose "$ROOT/android/box64-patches/android-build.patch"
 
 echo "[box64] configuring (NDK $NDK)"
+# NOALIGN: the guest is bionic x86_64, the host is bionic arm64 — pthread
+# attr/mutexattr/condattr struct layouts match, so every struct-based
+# wrapper must be a plain passthrough (this is box64's built-in switch for
+# "guest layout == host layout" and it also stops the 56-byte glibc
+# pthread_attr_t memcpy into the smaller bionic host attr).
 cmake -S "$WORK/box64" -B "$WORK/build" -G Ninja \
         -DCMAKE_SYSTEM_NAME=Android \
         -DCMAKE_SYSTEM_VERSION=28 \
@@ -35,6 +40,7 @@ cmake -S "$WORK/box64" -B "$WORK/build" -G Ninja \
         -DANDROID=ON \
         -DNOBOX64=ON \
         -DARM_DYNAREC=ON \
+        -DNOALIGN=ON \
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
